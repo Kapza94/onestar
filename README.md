@@ -65,6 +65,8 @@ Pipeline, per search:
 | Report generation | xAI Grok / OpenAI / Gemini — pick with `AI_PROVIDER` |
 | Storage | None. Reports live in memory + `localStorage`. No database, no accounts. |
 
+Backend evolution: [LUK-119 durable reports and metered usage plan](docs/architecture/LUK-119-backend-monetization-plan.md).
+
 ## Run it locally
 
 ```bash
