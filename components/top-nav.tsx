@@ -22,7 +22,7 @@ export function TopNav({
             search
           </Link>
           {hasReport ? (
-            <a href="#snapshot" className="hover:text-fg">
+            <a href="#report" className="hover:text-fg">
               report
             </a>
           ) : null}
