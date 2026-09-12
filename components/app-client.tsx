@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import {
   analyzeIdea,
@@ -19,16 +19,14 @@ import {
 import { EXAMPLE_COMPETITOR_URLS, EXAMPLE_IDEA, labeledExampleReport } from "@/lib/example-report";
 import { SEEDED_PREVIEW } from "@/lib/flags";
 import { sameIdea, uniqueRecentIdeas } from "@/lib/recent";
-import type { StarterSearch } from "@/lib/starters";
+import { LANDING_IDEA } from "@/lib/landing-sample";
 import type { PresenceSnapshot } from "@/lib/presence/store";
 import type { AnalyzeError, AppStatus, Report } from "@/lib/schemas";
 import { ErrorScreen } from "./error-screen";
-import { HowItWorks } from "./how-it-works";
+import { Landing } from "./landing";
 import { LivePresence } from "./live-presence";
-import { RecentProjects } from "./recent-projects";
 import { ReportView } from "./report-view";
 import { ResearchScreen } from "./research-screen";
-import { SearchHero } from "./search-hero";
 import { TopNav } from "./top-nav";
 
 type View = "home" | "research" | "error";
@@ -65,8 +63,8 @@ export function OneStarApp() {
   const queryIdea = searchParams.get("q")?.trim() || "";
   const [draft, setDraft] = useState<Draft | null>(null);
   const [status, setStatus] = useState<AppStatus | null>(null);
-  const [recent, setRecent] = useState<RecentIdea[]>([]);
-  const [archiveTotal, setArchiveTotal] = useState(0);
+  const [, setRecent] = useState<RecentIdea[]>([]);
+  const [, setArchiveTotal] = useState(0);
   const [presence, setPresence] = useState<PresenceSnapshot | null>(null);
   const requestSeq = useRef(0);
   const running = useRef(false);
@@ -102,6 +100,8 @@ export function OneStarApp() {
         report: session.report,
         view: "home",
       });
+    } else {
+      commit({ idea: LANDING_IDEA });
     }
 
     void fetchSearches(1, HOME_RECENT).then((result) => {
@@ -141,8 +141,6 @@ export function OneStarApp() {
     }, PRESENCE_MS);
     return () => window.clearInterval(timer);
   }, []);
-
-  const homeRecent = useMemo(() => uniqueRecentIdeas([...recent, ...(presence?.recentIdeas ?? [])]).slice(0, HOME_RECENT), [recent, presence]);
 
   function commit(next: Partial<Draft>) {
     setDraft((prev) => {
@@ -281,76 +279,38 @@ export function OneStarApp() {
     }
   }
 
-  function onPickRecent(item: RecentIdea) {
-    const saved = findSavedReport(item.idea);
-    const session = loadSession();
-    const storedReport =
-      saved?.report ??
-      (session?.report && sameIdea(session.report.idea, item.idea) ? session.report : null) ??
-      (report && sameIdea(report.idea, item.idea) ? report : null);
-    commit({
-      idea: saved?.idea ?? item.idea,
-      urls: saved?.urls ?? "",
-      report: storedReport,
-      view: "home",
-      error: null,
-    });
-    if (storedReport) {
-      requestAnimationFrame(() => document.getElementById("report")?.scrollIntoView({ behavior: "smooth" }));
-    } else {
-      requestAnimationFrame(() => document.getElementById("search")?.scrollIntoView({ behavior: "smooth" }));
-    }
-  }
-
-  function onStarter(item: StarterSearch) {
-    if (item.kind === "sample") {
-      showExample();
-      return;
-    }
-    commit({ idea: item.idea, urls: "", report: null, view: "home", error: null });
-    requestAnimationFrame(() => document.getElementById("search")?.scrollIntoView({ behavior: "smooth" }));
-  }
+  const showLanding = view === "home" && !report;
 
   return (
     <div className="min-h-[100dvh]">
-      <TopNav
-        demoMode={Boolean(status?.demoMode)}
-        model={status?.aiModel}
-        hasReport={Boolean(report)}
-        current="home"
-      />
-      <SearchHero
-        idea={idea}
-        urls={urls}
-        busy={busy}
-        onIdea={(value) => commit({ idea: value })}
-        onUrls={(value) => commit({ urls: value })}
-        onSubmit={() => void run()}
-        onExample={SEEDED_PREVIEW ? showExample : undefined}
-      />
-      {view === "research" ? <ResearchScreen idea={idea} /> : null}
-      {view === "error" && error ? (
-        <ErrorScreen
-          error={error}
-          onRetry={() => void run()}
-          onEdit={() => commit({ view: "home" })}
-          onExample={SEEDED_PREVIEW ? showExample : undefined}
+      {showLanding ? (
+        <Landing
+          idea={idea}
+          busy={busy}
+          onIdea={(value) => commit({ idea: value })}
+          onSubmit={(override) => void run(override ?? idea)}
         />
-      ) : null}
-      {view !== "research" && report ? (
-        <ReportView report={report} />
-      ) : view !== "research" && view !== "error" ? (
+      ) : (
         <>
-          <HowItWorks />
-          <RecentProjects
-            items={homeRecent}
-            total={Math.max(archiveTotal, recent.length, homeRecent.length)}
-            onPick={onPickRecent}
-            onStarter={onStarter}
+          <TopNav
+            demoMode={Boolean(status?.demoMode)}
+            model={status?.aiModel}
+            hasReport={Boolean(report)}
+            current="home"
           />
+          {view === "research" ? <ResearchScreen idea={idea} /> : null}
+          {view === "error" && error ? (
+            <ErrorScreen
+              error={error}
+              onRetry={() => void run()}
+              onEdit={() => commit({ view: "home" })}
+              onExample={SEEDED_PREVIEW ? showExample : undefined}
+            />
+          ) : null}
+          {view !== "research" && report ? <ReportView report={report} /> : null}
+          <LivePresence snapshot={presence} />
         </>
-      ) : null}
-      <LivePresence snapshot={presence} />
+      )}
     </div>
   );
 }
