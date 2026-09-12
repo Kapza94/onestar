@@ -61,7 +61,8 @@ export function OneStarApp() {
   const searchParams = useSearchParams();
   const queryIdea = searchParams.get("q")?.trim() || "";
   const [draft, setDraft] = useState<Draft | null>(null);
-  const [status, setStatus] = useState<AppStatus | null>(null);
+  const [, setStatus] = useState<AppStatus | null>(null);
+  const [goLanding, setGoLanding] = useState(false);
   const [, setRecent] = useState<RecentIdea[]>([]);
   const [, setArchiveTotal] = useState(0);
   const [, setPresence] = useState<PresenceSnapshot | null>(null);
@@ -186,6 +187,7 @@ export function OneStarApp() {
   }, [queryIdea]);
 
   function showExample() {
+    setGoLanding(false);
     const example = labeledExampleReport(EXAMPLE_IDEA);
     setRecent(pushRecentIdea(EXAMPLE_IDEA));
     void pingPresence({ action: "search", idea: EXAMPLE_IDEA }).then((snapshot) => {
@@ -221,6 +223,7 @@ export function OneStarApp() {
     if (trimmed.length < 12) return;
     if (running.current) return;
     running.current = true;
+    setGoLanding(false);
     const seq = ++requestSeq.current;
     setRecent(pushRecentIdea(trimmed));
     void pingPresence({ action: "search", idea: trimmed }).then((snapshot) => {
@@ -278,7 +281,7 @@ export function OneStarApp() {
     }
   }
 
-  const showLanding = view === "home" && !report;
+  const showLanding = goLanding || (view === "home" && !report);
 
   return (
     <div className="min-h-[100dvh]">
@@ -288,14 +291,17 @@ export function OneStarApp() {
           busy={busy}
           onIdea={(value) => commit({ idea: value })}
           onSubmit={(override) => void run(override ?? idea)}
+          onOpenReport={report ? () => setGoLanding(false) : undefined}
         />
       ) : (
         <>
           <TopNav
-            demoMode={Boolean(status?.demoMode)}
-            model={status?.aiModel}
             hasReport={Boolean(report)}
             current="home"
+            onHome={() => setGoLanding(true)}
+            onOpenReport={() =>
+              document.getElementById("report")?.scrollIntoView({ behavior: "smooth", block: "start" })
+            }
           />
           {view === "research" ? <ResearchScreen idea={idea} /> : null}
           {view === "error" && error ? (

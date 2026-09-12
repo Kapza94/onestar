@@ -11,11 +11,13 @@ export function Landing({
   onIdea,
   onSubmit,
   busy,
+  onOpenReport,
 }: {
   idea: string;
   onIdea: (value: string) => void;
   onSubmit: (ideaOverride?: string) => void;
   busy: boolean;
+  onOpenReport?: () => void;
 }) {
   function submit(event: React.FormEvent) {
     event.preventDefault();
@@ -31,6 +33,11 @@ export function Landing({
         <div className={`${CONTAINER} flex h-16 items-center justify-between gap-4`}>
           <Wordmark href="/" />
           <nav className="hidden items-center gap-8 text-[13px] text-muted md:flex">
+            {onOpenReport ? (
+              <button type="button" onClick={onOpenReport} className="text-acid hover:text-fg">
+                your report
+              </button>
+            ) : null}
             <a href="#sample" className="hover:text-fg">how it works</a>
             <a href="#sample" className="hover:text-fg">sample report</a>
             <a href="#pricing" className="hover:text-fg">pricing</a>

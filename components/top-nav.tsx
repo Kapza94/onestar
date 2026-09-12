@@ -1,41 +1,48 @@
 import Link from "next/link";
-import { Stamp } from "./stamp";
 import { Wordmark } from "./wordmark";
 
+const CONTAINER = "mx-auto w-full max-w-[1120px] px-5 md:px-8";
+
+const CTA_CLASS =
+  "rounded-md border border-acid px-4 py-2 text-[13px] font-medium text-acid transition-colors hover:bg-acid hover:text-bg";
+
 export function TopNav({
-  demoMode,
-  model,
   hasReport,
   current,
+  onHome,
+  onOpenReport,
 }: {
-  demoMode?: boolean;
-  model?: string;
   hasReport?: boolean;
   current?: "home" | "searches";
+  onHome?: () => void;
+  onOpenReport?: () => void;
 }) {
   return (
     <header className="border-b border-line">
-      <div className="mx-auto flex min-h-14 max-w-[1200px] flex-wrap items-center gap-x-4 gap-y-2 px-4 py-3 md:px-6">
-        <Wordmark href="/" />
-        <nav className="flex flex-wrap items-center gap-x-5 gap-y-2 text-[12px] text-muted">
-          <Link href="/#search" className={current === "home" ? "text-acid" : "hover:text-fg"}>
-            search
-          </Link>
-          {hasReport ? (
-            <a href="#report" className="hover:text-fg">
+      <div className={`${CONTAINER} flex h-16 items-center justify-between gap-4`}>
+        {onHome ? <Wordmark onClick={onHome} /> : <Wordmark href="/" />}
+        <nav className="hidden items-center gap-8 text-[13px] text-muted md:flex">
+          {hasReport && onOpenReport ? (
+            <button type="button" onClick={onOpenReport} className="hover:text-fg">
               report
-            </a>
+            </button>
           ) : null}
-          <Link href="/#live" className="hover:text-fg">
-            live
-          </Link>
-          <Link href="/searches" className={current === "searches" ? "text-acid" : "hover:text-fg"}>
+          <Link
+            href="/searches"
+            className={current === "searches" ? "text-fg" : "hover:text-fg"}
+          >
             all searches
           </Link>
         </nav>
-        <span className="ml-auto hidden sm:inline-flex">
-          {demoMode ? <Stamp tone="acid">example mode</Stamp> : <Stamp>{model || "public sources"}</Stamp>}
-        </span>
+        {onHome ? (
+          <button type="button" onClick={onHome} className={CTA_CLASS}>
+            new search
+          </button>
+        ) : (
+          <Link href="/" className={CTA_CLASS}>
+            new search
+          </Link>
+        )}
       </div>
     </header>
   );
