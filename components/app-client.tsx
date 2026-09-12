@@ -204,7 +204,7 @@ export function OneStarApp() {
       view: "home",
       error: null,
     });
-    requestAnimationFrame(() => document.getElementById("snapshot")?.scrollIntoView({ behavior: "smooth" }));
+    requestAnimationFrame(() => document.getElementById("report")?.scrollIntoView({ behavior: "smooth" }));
   }
 
   useEffect(() => {
@@ -275,7 +275,7 @@ export function OneStarApp() {
         view: "home",
         error: null,
       });
-      requestAnimationFrame(() => document.getElementById("snapshot")?.scrollIntoView({ behavior: "smooth" }));
+      requestAnimationFrame(() => document.getElementById("report")?.scrollIntoView({ behavior: "smooth" }));
     } finally {
       running.current = false;
     }
@@ -296,7 +296,7 @@ export function OneStarApp() {
       error: null,
     });
     if (storedReport) {
-      requestAnimationFrame(() => document.getElementById("snapshot")?.scrollIntoView({ behavior: "smooth" }));
+      requestAnimationFrame(() => document.getElementById("report")?.scrollIntoView({ behavior: "smooth" }));
     } else {
       requestAnimationFrame(() => document.getElementById("search")?.scrollIntoView({ behavior: "smooth" }));
     }
@@ -328,13 +328,6 @@ export function OneStarApp() {
         onSubmit={() => void run()}
         onExample={SEEDED_PREVIEW ? showExample : undefined}
       />
-      <HowItWorks />
-      <RecentProjects
-        items={homeRecent}
-        total={Math.max(archiveTotal, recent.length, homeRecent.length)}
-        onPick={onPickRecent}
-        onStarter={onStarter}
-      />
       {view === "research" ? <ResearchScreen idea={idea} /> : null}
       {view === "error" && error ? (
         <ErrorScreen
@@ -344,7 +337,19 @@ export function OneStarApp() {
           onExample={SEEDED_PREVIEW ? showExample : undefined}
         />
       ) : null}
-      {view !== "research" && report ? <ReportView report={report} /> : null}
+      {view !== "research" && report ? (
+        <ReportView report={report} />
+      ) : view !== "research" && view !== "error" ? (
+        <>
+          <HowItWorks />
+          <RecentProjects
+            items={homeRecent}
+            total={Math.max(archiveTotal, recent.length, homeRecent.length)}
+            onPick={onPickRecent}
+            onStarter={onStarter}
+          />
+        </>
+      ) : null}
       <LivePresence snapshot={presence} />
     </div>
   );

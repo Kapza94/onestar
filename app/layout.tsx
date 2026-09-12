@@ -16,7 +16,14 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
     <html lang="en" className={`${mono.variable} h-full antialiased`}>
-      <body className="min-h-full bg-bg font-mono text-fg">{children}</body>
+      <head>
+        <link rel="preconnect" href="https://api.fontshare.com" crossOrigin="anonymous" />
+        <link
+          href="https://api.fontshare.com/v2/css?f[]=ranade@300,400,500,700&display=swap"
+          rel="stylesheet"
+        />
+      </head>
+      <body className="min-h-full bg-bg font-sans text-fg">{children}</body>
     </html>
   );
 }

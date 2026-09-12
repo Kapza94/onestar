@@ -26,8 +26,9 @@
   --color-rage-dim: var(--rage-dim);
   --color-acid: var(--acid);
   --color-acid-dim: var(--acid-dim);
-  --font-sans: var(--font-mono), ui-monospace, monospace;
-  --font-serif: var(--font-mono), ui-monospace, monospace;
+  --font-sans: "Ranade", ui-sans-serif, system-ui, sans-serif;
+  --font-serif: "Ranade", ui-sans-serif, system-ui, sans-serif;
+  --font-display: "Ranade", ui-sans-serif, system-ui, sans-serif;
   --font-label: var(--font-mono), ui-monospace, monospace;
   --font-mono: var(--font-mono), ui-monospace, monospace;
 }
