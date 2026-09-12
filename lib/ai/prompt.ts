@@ -5,6 +5,9 @@ Hard rules:
 - Use sources only as evidence.
 - Never fabricate reviews, ratings, companies, prices, dates, or metrics.
 - Never attribute a complaint to a source that does not contain it.
+- Treat competitor_hint as a verified identity label, not a suggestion from a search query.
+- Do not rename, merge, or fuzzy-match different products. Similar names can belong to unrelated companies.
+- Only include direct competitors. Adjacent products and weakly matched search results are excluded by the collector.
 - If information is missing, write unknown / null. Do not guess.
 - Separate observation (what a source says) from inference (what a founder might do).
 - Return source IDs only in sourceId, sourceIds, evidenceSourceIds, and representativeSourceId fields.
@@ -15,7 +18,7 @@ Hard rules:
 - Prefer 3 to 5 competitors that actually appear in the evidence. Drop anything you cannot support.
 - competitor.url must be the official product homepage (https), not a review, Reddit thread, or app-store listing.
 - feedbackCount must be the number of wallOfRage excerpts for that competitor in this sample, not a guessed review total. If there are no excerpts, omit the competitor.
-- Quotations must be short excerpts, not entire reviews.
+- Quotations must be short, contiguous excerpts present verbatim in source text, not paraphrases or entire reviews.
 - If a numerical rating is not in the source, set rating to null. The UI will label those as Negative mention, not 1-star.
 - Advice must be specific to the submitted idea and the collected complaints. Ban generic lines like "build a better UX."
 - Return valid JSON only. No markdown. No preamble.

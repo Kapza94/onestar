@@ -8,6 +8,17 @@ import { reportSchema, type AnalyzeInput, type Report } from "../schemas";
 import { exaContents, exaSearch, mapLimit, type ExaResult } from "./exa";
 import { firecrawlScrape } from "./firecrawl";
 import {
+  buildProductIdentity,
+  canonicalEvidenceUrl,
+  claimExistsInSource,
+  evidenceSourceType,
+  excerptExistsInSource,
+  identitiesMatch,
+  productRelationshipToIdea,
+  ratingExistsInSource,
+  sourceMatchesProduct,
+} from "./evidence";
+import {
   clip,
   displayNameFromUrl,
   hostnameOf,
@@ -32,11 +43,33 @@ type CompetitorHint = {
   url: string;
 };
 
-const COMPLAINT_PATTERNS = [
-  (name: string) => `${name} reviews complaints`,
-  (name: string) => `site:reddit.com ${name} problems OR disappointed OR "stopped using"`,
-  (name: string) => `${name} "customer support" OR "does not work" OR "waste of money"`,
+const COMPLAINT_SEARCH_WAVES = [
+  {
+    type: "reddit",
+    query: (name: string) =>
+      `site:reddit.com "${name}" (problem OR disappointed OR "stopped using" OR cancellation)`,
+  },
+  {
+    type: "forum",
+    query: (name: string) =>
+      `"${name}" (forum OR community OR discussion) (problem OR frustrating OR alternative)`,
+  },
+  {
+    type: "community",
+    query: (name: string) =>
+      `(site:news.ycombinator.com OR site:github.com) "${name}" (issue OR problem OR alternative)`,
+  },
+  {
+    type: "web",
+    query: (name: string) =>
+      `"${name}" (review OR complaints) ("customer support" OR "does not work" OR "waste of money")`,
+  },
 ];
+
+const MAX_COMPLAINT_RESULTS = 32;
+const MAX_RESULTS_PER_COMPETITOR = 8;
+const DIVERSE_RESULT_TARGET = 5;
+const DIVERSE_SOURCE_TARGET = 3;
 
 function asHttpUrl(value: string) {
   try {
@@ -66,7 +99,49 @@ function looksLikeCompanyPage(result: ExaResult) {
   if (["reddit.com", "producthunt.com", "github.com", "youtube.com", "wikipedia.org"].some((item) => host.endsWith(item))) {
     return false;
   }
-  return sourceQuality(result.url) >= 1;
+  try {
+    const path = new URL(result.url).pathname.replace(/\/+$/, "") || "/";
+    return sourceQuality(result.url) >= 1 && (path === "/" || path === "/home");
+  } catch {
+    return false;
+  }
+}
+
+function productNameFromResult(result: ExaResult) {
+  const domainLabel = hostnameOf(result.url).split(".")[0]?.replace(/[^a-z0-9]/gi, "").toLowerCase() || "";
+  const genericTitles = new Set(["home", "homepage", "official site", "welcome"]);
+  const titleParts = result.title
+    .split(/\s+[|—–:]\s+/)
+    .map((part) => part.trim())
+    .filter((part) => part.length >= 2 && part.length <= 48 && part.split(/\s+/).length <= 5)
+    .filter((part) => !genericTitles.has(part.toLowerCase()))
+    .sort((a, b) => {
+      const aCompact = a.replace(/[^a-z0-9]/gi, "").toLowerCase();
+      const bCompact = b.replace(/[^a-z0-9]/gi, "").toLowerCase();
+      const aDomainMatch = aCompact === domainLabel || aCompact.includes(domainLabel) ? 1 : 0;
+      const bDomainMatch = bCompact === domainLabel || bCompact.includes(domainLabel) ? 1 : 0;
+      return bDomainMatch - aDomainMatch ||
+        a.split(/\s+/).length - b.split(/\s+/).length ||
+        a.length - b.length;
+    });
+  if (titleParts[0]) {
+    return titleParts[0];
+  }
+  return displayNameFromUrl(result.url);
+}
+
+function productNameFromUrl(value: string) {
+  const host = hostnameOf(value);
+  const [label, suffix] = host.split(".");
+  if (label && suffix && ["ai", "app", "co", "io", "me"].includes(suffix)) {
+    return `${label}.${suffix}`;
+  }
+  return displayNameFromUrl(value);
+}
+
+function homepageUrl(value: string) {
+  const url = new URL(value);
+  return `${url.protocol}//${url.host}/`;
 }
 
 function isOfficialHomepage(url: string) {
@@ -81,17 +156,19 @@ function isOfficialHomepage(url: string) {
   return Boolean(asHttpUrl(url)) && sourceQuality(url) >= 1 && !isBrittleHost(url);
 }
 
-function officialCompetitorUrl(name: string, url: string, hints: CompetitorHint[]) {
-  const fromModel = asHttpUrl(url);
-  const needle = name.trim().toLowerCase().replace(/[^a-z0-9]/g, "");
-  const fromHint = hints.find((hint) => {
-    const hintName = hint.name.trim().toLowerCase().replace(/[^a-z0-9]/g, "");
-    const host = hostnameOf(hint.url).replace(/[^a-z0-9]/g, "");
-    return hintName === needle || (needle.length > 2 && (host.includes(needle) || needle.includes(hintName)));
-  });
-  if (fromModel && isOfficialHomepage(fromModel)) return fromModel;
-  if (fromHint && isOfficialHomepage(fromHint.url)) return fromHint.url;
-  return fromModel || fromHint?.url || url;
+function resolveCompetitorHint(name: string, url: string | null, hints: CompetitorHint[]) {
+  const byName = hints.filter((hint) =>
+    identitiesMatch({ name, url: "" }, { name: hint.name, url: "" }),
+  );
+  const modelHost = url ? hostnameOf(url) : "";
+  const byUrl = modelHost
+    ? hints.filter((hint) => hostnameOf(hint.url) === modelHost)
+    : [];
+
+  if (byName.length === 1 && byUrl.length === 1 && byName[0] !== byUrl[0]) return null;
+  if (byName.length === 1) return byName[0];
+  if (byName.length === 0 && byUrl.length === 1) return byUrl[0];
+  return null;
 }
 
 async function discoverCompetitors(
@@ -118,8 +195,8 @@ async function discoverCompetitors(
   }
 
   const discoveryQueries = [
-    `${idea} alternatives competitors apps`,
-    `best alternatives to ${clip(idea, 80)}`,
+    `${clip(idea, 120)} direct competitors alternatives`,
+    `${clip(idea, 120)} products for the same customer problem`,
   ];
 
   const discovery: ExaResult[] = [];
@@ -150,61 +227,164 @@ async function discoverCompetitors(
   const fromSeeds: CompetitorHint[] = (seeded.length ? seeded : []).map((url) => {
     const page = seedPages.find((item) => hostnameOf(item.url) === hostnameOf(url));
     return {
-      name: page ? displayNameFromUrl(page.url) : displayNameFromUrl(url),
-      url,
+      name: page
+        ? productNameFromResult({
+            title: page.title,
+            url: page.url,
+            text: page.text,
+            highlights: [],
+            publishedDate: page.publishedAt,
+            author: null,
+          })
+        : productNameFromUrl(url),
+      url: homepageUrl(url),
     };
   });
 
-  const fromSearch: CompetitorHint[] = companyResults.map((result) => ({
-    name: displayNameFromUrl(result.url),
-    url: result.url,
+  const directResults = companyResults.filter(
+    (result) => productRelationshipToIdea(result, idea) === "direct",
+  );
+  const adjacentResults = companyResults.filter(
+    (result) => productRelationshipToIdea(result, idea) === "adjacent",
+  );
+
+  const fromSearch: CompetitorHint[] = directResults.map((result) => ({
+    name: productNameFromResult(result),
+    url: homepageUrl(result.url),
   }));
+
+  if (adjacentResults.length > 0) {
+    warnings.push(
+      `Excluded ${adjacentResults.length} adjacent or weakly matched product${adjacentResults.length === 1 ? "" : "s"} from direct-competitor complaint search.`,
+    );
+  }
 
   const hints = uniqueBy([...fromSeeds, ...fromSearch], (item) => hostnameOf(item.url)).slice(0, 5);
 
-  return { hints, warnings, seedPages };
+  const verifiedSeedPages = seedPages.map((page) => {
+    const hint = hints.find((item) => hostnameOf(item.url) === hostnameOf(page.url));
+    return hint ? { ...page, competitorHint: hint.name } : page;
+  });
+
+  return { hints, warnings, seedPages: verifiedSeedPages };
 }
 
 async function collectComplaints(
   apiKey: string,
   hints: CompetitorHint[],
-  idea: string,
 ): Promise<{ results: Array<ExaResult & { competitorHint: string }>; warnings: string[] }> {
   const warnings: string[] = [];
-  const jobs: Array<{ query: string; competitorHint: string }> = [];
-  for (const pattern of COMPLAINT_PATTERNS) {
-    for (const hint of hints) {
-      jobs.push({ query: pattern(hint.name), competitorHint: hint.name });
+  const collected: Array<ExaResult & { competitorHint: string }> = [];
+  const seenUrls = new Set<string>();
+  const seenDocuments = new Set<string>();
+  const resultCount = new Map<string, number>();
+  const sourceTypes = new Map<string, Set<string>>();
+
+  const hasEnough = (hint: CompetitorHint) => {
+    const count = resultCount.get(hint.name) || 0;
+    const diversity = sourceTypes.get(hint.name)?.size || 0;
+    return count >= MAX_RESULTS_PER_COMPETITOR ||
+      (count >= DIVERSE_RESULT_TARGET && diversity >= DIVERSE_SOURCE_TARGET);
+  };
+
+  for (const wave of COMPLAINT_SEARCH_WAVES) {
+    if (collected.length >= MAX_COMPLAINT_RESULTS) break;
+    const activeHints = hints.filter((hint) => !hasEnough(hint));
+    if (activeHints.length === 0) break;
+
+    const batches = await mapLimit(activeHints, 4, async (hint) => {
+      const query = wave.query(hint.name);
+      try {
+        const results = await exaSearch(apiKey, query, {
+          numResults: 6,
+          type: "fast",
+          maxCharacters: 1800,
+          highlightQuery: `${hint.name} complaints problems negative disappointed cancellation`,
+          excludeDomains: ["g2.com", "capterra.com", "trustpilot.com"],
+        });
+        const identity = buildProductIdentity(hint.name, hint.url);
+        return results
+          .filter((result) => sourceMatchesProduct(result, identity))
+          .map((result) => ({ ...result, competitorHint: hint.name }));
+      } catch {
+        warnings.push(`Search failed for “${query}”.`);
+        return [];
+      }
+    });
+
+    for (const result of batches.flat()) {
+      if (collected.length >= MAX_COMPLAINT_RESULTS) break;
+      const count = resultCount.get(result.competitorHint) || 0;
+      if (count >= MAX_RESULTS_PER_COMPETITOR) continue;
+
+      const canonicalUrl = canonicalEvidenceUrl(result.url);
+      const documentKey = `${result.competitorHint}:${clip(`${result.title} ${result.text}`, 240).toLowerCase()}`;
+      if (seenUrls.has(canonicalUrl) || seenDocuments.has(documentKey)) continue;
+
+      const type = evidenceSourceType(result.url) || wave.type;
+      const hostCount = collected.filter(
+        (item) =>
+          item.competitorHint === result.competitorHint &&
+          hostnameOf(item.url) === hostnameOf(result.url),
+      ).length;
+      if (hostCount >= 3) continue;
+
+      seenUrls.add(canonicalUrl);
+      seenDocuments.add(documentKey);
+      collected.push(result);
+      resultCount.set(result.competitorHint, count + 1);
+      const types = sourceTypes.get(result.competitorHint) || new Set<string>();
+      types.add(type);
+      sourceTypes.set(result.competitorHint, types);
     }
   }
 
-  jobs.push({
-    query: `${clip(idea, 70)} complaints problems "stopped using" OR disappointed OR "does not work"`,
-    competitorHint: "unknown",
-  });
+  const missing = hints.filter((hint) => (resultCount.get(hint.name) || 0) === 0);
+  if (missing.length > 0) {
+    warnings.push(
+      `No identity-verified complaint pages found for: ${missing.map((hint) => hint.name).join(", ")}.`,
+    );
+  }
 
-  const batches = await mapLimit(jobs.slice(0, 20), 4, async (job) => {
-    try {
-      const results = await exaSearch(apiKey, job.query, {
-        numResults: 5,
-        type: "fast",
-        maxCharacters: 1600,
-        highlightQuery: `${job.competitorHint} complaints problems negative disappointed cancellation`,
-        excludeDomains: ["g2.com", "capterra.com", "trustpilot.com"],
-      });
-      return results.map((result) => ({ ...result, competitorHint: job.competitorHint }));
-    } catch {
-      warnings.push(`Search failed for “${job.query}”.`);
-      return [];
+  return { results: collected, warnings };
+}
+
+function selectDiversePages(pages: EvidencePage[], limit: number) {
+  const selected = pages.filter((page) => page.via === "seed").slice(0, limit);
+  const selectedUrls = new Set(selected.map((page) => canonicalEvidenceUrl(page.url)));
+  const buckets = new Map<string, EvidencePage[]>();
+
+  for (const page of pages
+    .filter((item) => item.via !== "seed")
+    .sort((a, b) => sourceQuality(b.url) - sourceQuality(a.url) || b.text.length - a.text.length)) {
+    const key = `${page.competitorHint || "unknown"}:${evidenceSourceType(page.url)}`;
+    const bucket = buckets.get(key) || [];
+    bucket.push(page);
+    buckets.set(key, bucket);
+  }
+
+  while (selected.length < limit) {
+    let added = false;
+    for (const bucket of buckets.values()) {
+      const page = bucket.shift();
+      if (!page) continue;
+      const url = canonicalEvidenceUrl(page.url);
+      if (selectedUrls.has(url)) continue;
+      selected.push(page);
+      selectedUrls.add(url);
+      added = true;
+      if (selected.length >= limit) break;
     }
-  });
+    if (!added) break;
+  }
 
-  return { results: batches.flat(), warnings };
+  return selected;
 }
 
 async function enrichWithFirecrawl(
   apiKey: string | undefined,
   pages: EvidencePage[],
+  hints: CompetitorHint[],
 ): Promise<{ pages: EvidencePage[]; warnings: string[] }> {
   const warnings: string[] = [];
   if (!apiKey) {
@@ -225,6 +405,19 @@ async function enrichWithFirecrawl(
     const doc = scraped[matchIndex];
     if (!doc) {
       warnings.push(`Skipped inaccessible page: ${page.url}`);
+      return page;
+    }
+    const hint = page.competitorHint
+      ? hints.find((item) => identitiesMatch(item, { name: page.competitorHint || "", url: "" }))
+      : null;
+    if (
+      hint &&
+      !sourceMatchesProduct(
+        { title: doc.title, url: doc.url, text: doc.markdown },
+        buildProductIdentity(hint.name, hint.url),
+      )
+    ) {
+      warnings.push(`Ignored scraped replacement that did not verify ${hint.name}: ${page.url}`);
       return page;
     }
     return {
@@ -296,7 +489,7 @@ function coerceReport(
   const allowed = new Set(pages.map((page) => page.id));
   const knownUrls = new Map(pages.map((page) => [page.id, page]));
 
-  const sources = report.sources
+  const collectedSources = report.sources
     .filter((source) => allowed.has(source.id))
     .map((source) => {
       const page = knownUrls.get(source.id);
@@ -305,69 +498,167 @@ function coerceReport(
         ...source,
         url: page.url,
         domain: page.domain,
-        title: source.title || page.title,
-        publishedAt: source.publishedAt || page.publishedAt,
+        title: page.title,
+        publishedAt: page.publishedAt,
       };
     });
 
-  const sourceIds = new Set(sources.map((source) => source.id));
+  const sourceIds = new Set(collectedSources.map((source) => source.id));
   const pageById = new Map(pages.map((page) => [page.id, page]));
 
   const wallOfRage = report.wallOfRage
     .filter((item) => sourceIds.has(item.sourceId))
     .map((item) => {
-      const hint = pageById.get(item.sourceId)?.competitorHint;
-      if (hint && hint !== "unknown" && !namesMatch(item.competitor, hint)) {
-        const hinted = report.competitors.find((competitor) => namesMatch(competitor.name, hint));
-        if (hinted) return { ...item, competitor: hinted.name };
+      const page = pageById.get(item.sourceId);
+      if (!page || !excerptExistsInSource(item.excerpt, page.text)) return null;
+
+      const claimedHint = resolveCompetitorHint(item.competitor, null, hints);
+      const pageHint = page.competitorHint
+        ? resolveCompetitorHint(page.competitorHint, null, hints)
+        : null;
+      if (!claimedHint || (pageHint && pageHint !== claimedHint)) return null;
+      if (!sourceMatchesProduct(page, buildProductIdentity(claimedHint.name, claimedHint.url))) {
+        return null;
       }
-      return item;
-    });
+      return {
+        ...item,
+        competitor: claimedHint.name,
+        platform: page.domain,
+        publishedAt: page.publishedAt,
+        rating:
+          item.rating !== null && ratingExistsInSource(item.rating, page.text)
+            ? item.rating
+            : null,
+      };
+    })
+    .filter((item): item is Report["wallOfRage"][number] => Boolean(item));
+
+  if (wallOfRage.length === 0) {
+    throw new AnalyzeFailure(
+      "no_feedback",
+      "Sources were collected, but no complaint excerpt could be verified against the retrieved text.",
+      { retryable: true, status: 422 },
+    );
+  }
+
+  const discardedExcerpts = report.wallOfRage.length - wallOfRage.length;
+  const verifiedWarnings = [...warnings];
+  if (discardedExcerpts > 0) {
+    verifiedWarnings.push(
+      `Discarded ${discardedExcerpts} complaint excerpt${discardedExcerpts === 1 ? "" : "s"} that failed source or product verification.`,
+    );
+  }
 
   const competitors = report.competitors
     .map((competitor) => {
-      const url = officialCompetitorUrl(competitor.name, competitor.url, hints);
-      const ids = competitor.sourceIds.filter((id) => sourceIds.has(id));
-      const fromWall = wallOfRage.filter((item) => namesMatch(item.competitor, competitor.name)).length;
-      const fromPages = pages.filter((page) => {
-        if (page.competitorHint && namesMatch(page.competitorHint, competitor.name)) return true;
-        return hostnameOf(url) && hostnameOf(page.url) === hostnameOf(url);
-      }).length;
-      const feedbackCount = fromWall || fromPages;
+      const hint = resolveCompetitorHint(competitor.name, competitor.url, hints);
+      if (!hint || !isOfficialHomepage(hint.url)) return null;
+      const complaintItems = wallOfRage.filter((item) => namesMatch(item.competitor, hint.name));
+      const complaintIds = complaintItems.map((item) => item.sourceId);
+      const identitySourceIds = competitor.sourceIds.filter((id) => {
+        if (!sourceIds.has(id)) return false;
+        const page = pageById.get(id);
+        if (!page) return false;
+        if (hostnameOf(page.url) === hostnameOf(hint.url)) return true;
+        const pageHint = page.competitorHint
+          ? resolveCompetitorHint(page.competitorHint, null, hints)
+          : null;
+        return pageHint === hint;
+      });
+      const ids = uniqueBy(
+        [...identitySourceIds, ...complaintIds],
+        (id) => id,
+      );
+      const categoryCounts = new Map<string, number>();
+      for (const item of complaintItems) {
+        categoryCounts.set(item.category, (categoryCounts.get(item.category) || 0) + 1);
+      }
+      const mostCommonCategory = [...categoryCounts.entries()]
+        .sort((a, b) => b[1] - a[1])[0];
+      const pricingSupported = competitor.pricing
+        ? ids.some((id) => claimExistsInSource(competitor.pricing || "", pageById.get(id)?.text || ""))
+        : false;
       return {
         ...competitor,
-        url,
+        name: hint.name,
+        url: hint.url,
         sourceIds: ids,
-        feedbackCount,
-        mostCommonComplaint:
-          fromWall > 0
-            ? competitor.mostCommonComplaint
-            : "No complaint excerpts landed in this sample.",
+        pricing: pricingSupported ? competitor.pricing : null,
+        feedbackCount: complaintItems.length,
+        mostCommonComplaint: mostCommonCategory
+          ? `${mostCommonCategory[0]} (${mostCommonCategory[1]} verified excerpt${mostCommonCategory[1] === 1 ? "" : "s"} in this sample).`
+          : "Unknown.",
       };
     })
-    .filter((competitor) => competitor.feedbackCount > 0 || competitor.sourceIds.length > 0 || competitor.url.startsWith("http"));
+    .filter((competitor): competitor is Report["competitors"][number] =>
+      Boolean(competitor && competitor.feedbackCount > 0),
+    );
+
+  if (competitors.length === 0) {
+    throw new AnalyzeFailure(
+      "no_feedback",
+      "Complaint excerpts were found, but none belonged to a verified direct competitor.",
+      { retryable: true, status: 422 },
+    );
+  }
+
+  const competitorNames = new Set(competitors.map((competitor) => competitor.name));
+  const verifiedWall = wallOfRage.filter((item) => competitorNames.has(item.competitor));
+  const complaintSourceIds = new Set(verifiedWall.map((item) => item.sourceId));
+  const sources = collectedSources.map((source) => {
+    const excerpts = verifiedWall.filter((item) => item.sourceId === source.id);
+    const page = pageById.get(source.id);
+    const identityHint = page?.competitorHint
+      ? resolveCompetitorHint(page.competitorHint, null, hints)
+      : null;
+    return {
+      ...source,
+      findings: excerpts.length > 0
+        ? `Retrieved text contains ${excerpts.length} verified complaint excerpt${excerpts.length === 1 ? "" : "s"} attributed to ${uniqueBy(excerpts, (item) => item.competitor).map((item) => item.competitor).join(", ")}.`
+        : identityHint && hostnameOf(page?.url || "") === hostnameOf(identityHint.url)
+          ? `Official product page used to verify ${identityHint.name} identity and domain.`
+          : "Retrieved as supporting context; no complaint excerpt from this page appears in the report.",
+    };
+  });
+
+  const themes = report.themes
+    .filter((theme) => complaintSourceIds.has(theme.representativeSourceId))
+    .map((theme) => {
+      const matching = verifiedWall.filter((item) => namesMatch(item.category, theme.theme));
+      const evidence = matching.length > 0
+        ? matching
+        : verifiedWall.filter((item) => item.sourceId === theme.representativeSourceId);
+      return {
+        ...theme,
+        evidenceCount: evidence.length,
+        competitorsAffected: uniqueBy(evidence, (item) => item.competitor).map(
+          (item) => item.competitor,
+        ),
+      };
+    })
+    .filter((theme) => theme.evidenceCount > 0 && theme.competitorsAffected.length > 0);
 
   return sanitizeReportCopy({
     ...report,
     sources,
-    wallOfRage,
+    wallOfRage: verifiedWall,
     competitors,
-    themes: report.themes.filter((theme) => sourceIds.has(theme.representativeSourceId)),
+    themes,
     opportunities: report.opportunities.map((item) => ({
       ...item,
-      evidenceSourceIds: item.evidenceSourceIds.filter((id) => sourceIds.has(id)),
+      evidenceSourceIds: item.evidenceSourceIds.filter((id) => complaintSourceIds.has(id)),
     })).filter((item) => item.evidenceSourceIds.length > 0),
     buildThisNotThat: report.buildThisNotThat.map((item) => ({
       ...item,
-      sourceIds: item.sourceIds.filter((id) => sourceIds.has(id)),
-    })),
+      sourceIds: item.sourceIds.filter((id) => complaintSourceIds.has(id)),
+    })).filter((item) => item.sourceIds.length > 0),
     market: {
       ...report.market,
       competitorCount: competitors.length,
       sourcesAnalyzed: pages.length,
-      negativeFeedbackCount: wallOfRage.length,
+      negativeFeedbackCount: verifiedWall.length,
     },
-    warnings,
+    warnings: uniqueBy(verifiedWarnings, (item) => item),
   });
 }
 
@@ -419,7 +710,7 @@ export async function runAnalysis(input: AnalyzeInput): Promise<Report> {
 
   let complaintPack;
   try {
-    complaintPack = await collectComplaints(env.exaApiKey, discovery.hints, input.idea);
+    complaintPack = await collectComplaints(env.exaApiKey, discovery.hints);
     warnings.push(...complaintPack.warnings);
   } catch (error) {
     throw new AnalyzeFailure(
@@ -429,20 +720,18 @@ export async function runAnalysis(input: AnalyzeInput): Promise<Report> {
     );
   }
 
-  const merged = uniqueBy(
+  const merged = selectDiversePages(uniqueBy(
     [
       ...discovery.seedPages,
       ...complaintPack.results.map((result, index) =>
         toPage(result, index + discovery.seedPages.length, result.competitorHint, "exa"),
       ),
     ],
-    (item) => item.url,
-  )
-    .sort((a, b) => sourceQuality(b.url) - sourceQuality(a.url) || b.text.length - a.text.length)
-    .slice(0, 24)
+    (item) => canonicalEvidenceUrl(item.url),
+  ), 24)
     .map((page, index) => ({ ...page, id: `s${index + 1}` }));
 
-  const enriched = await enrichWithFirecrawl(env.firecrawlApiKey, merged);
+  const enriched = await enrichWithFirecrawl(env.firecrawlApiKey, merged, discovery.hints);
   warnings.push(...enriched.warnings);
 
   const usable = enriched.pages.filter((page) => page.text.length > 40);
@@ -450,6 +739,15 @@ export async function runAnalysis(input: AnalyzeInput): Promise<Report> {
     throw new AnalyzeFailure(
       "no_feedback",
       "Public sources were found, but none yielded usable complaint text. Try a more specific idea or a competitor URL.",
+      { retryable: true, status: 422 },
+    );
+  }
+
+  const complaintPages = usable.filter((page) => page.via !== "seed" && page.competitorHint);
+  if (complaintPages.length === 0) {
+    throw new AnalyzeFailure(
+      "no_feedback",
+      "No identity-verified complaint pages yielded usable text. Try a more specific idea or competitor URL.",
       { retryable: true, status: 422 },
     );
   }
