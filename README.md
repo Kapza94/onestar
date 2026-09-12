@@ -89,6 +89,8 @@ DEMO_MODE=false
 
 Live research needs `EXA_API_KEY` plus one model key. `FIRECRAWL_API_KEY` is optional. With `DEMO_MODE=true` the app runs fully keyless and serves the labeled example report.
 
+Production research is guarded by Cloudflare Rate Limiting bindings: two analyses per visitor per minute and 30 analyses globally per minute. Set `RESEARCH_ENABLED=false` as an emergency spend kill switch. These limits protect bursts; durable account credits belong in the planned usage backend.
+
 ```bash
 npm run dev      # local dev
 npm run deploy   # build with OpenNext + deploy to Cloudflare Workers
