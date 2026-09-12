@@ -2,6 +2,7 @@ import { generateReportJson } from "../ai/provider";
 import { buildUserPrompt, SYSTEM_PROMPT } from "../ai/prompt";
 import { getEnv, isAiConfigured, isResearchConfigured } from "../env";
 import { AnalyzeFailure } from "../errors";
+import { namesMatch, sanitizeReportCopy } from "../copy";
 import { labeledExampleReport } from "../example-report";
 import { reportSchema, type AnalyzeInput, type Report } from "../schemas";
 import { exaContents, exaSearch, mapLimit, type ExaResult } from "./exa";
@@ -33,8 +34,8 @@ type CompetitorHint = {
 
 const COMPLAINT_PATTERNS = [
   (name: string) => `${name} reviews complaints`,
-  (name: string) => `${name} problems disappointed`,
-  (name: string) => `site:reddit.com ${name} problems`,
+  (name: string) => `site:reddit.com ${name} problems OR disappointed OR "stopped using"`,
+  (name: string) => `${name} "customer support" OR "does not work" OR "waste of money"`,
 ];
 
 function asHttpUrl(value: string) {
@@ -66,6 +67,31 @@ function looksLikeCompanyPage(result: ExaResult) {
     return false;
   }
   return sourceQuality(result.url) >= 1;
+}
+
+function isOfficialHomepage(url: string) {
+  const host = hostnameOf(url);
+  if (
+    ["reddit.com", "producthunt.com", "github.com", "youtube.com", "wikipedia.org"].some(
+      (item) => host === item || host.endsWith(`.${item}`),
+    )
+  ) {
+    return false;
+  }
+  return Boolean(asHttpUrl(url)) && sourceQuality(url) >= 1 && !isBrittleHost(url);
+}
+
+function officialCompetitorUrl(name: string, url: string, hints: CompetitorHint[]) {
+  const fromModel = asHttpUrl(url);
+  const needle = name.trim().toLowerCase().replace(/[^a-z0-9]/g, "");
+  const fromHint = hints.find((hint) => {
+    const hintName = hint.name.trim().toLowerCase().replace(/[^a-z0-9]/g, "");
+    const host = hostnameOf(hint.url).replace(/[^a-z0-9]/g, "");
+    return hintName === needle || (needle.length > 2 && (host.includes(needle) || needle.includes(hintName)));
+  });
+  if (fromModel && isOfficialHomepage(fromModel)) return fromModel;
+  if (fromHint && isOfficialHomepage(fromHint.url)) return fromHint.url;
+  return fromModel || fromHint?.url || url;
 }
 
 async function discoverCompetitors(
@@ -145,10 +171,9 @@ async function collectComplaints(
   idea: string,
 ): Promise<{ results: Array<ExaResult & { competitorHint: string }>; warnings: string[] }> {
   const warnings: string[] = [];
-  const jobs: Array<{ query: string; competitorHint: string; includeDomains?: string[] }> = [];
-
-  for (const hint of hints) {
-    for (const pattern of COMPLAINT_PATTERNS) {
+  const jobs: Array<{ query: string; competitorHint: string }> = [];
+  for (const pattern of COMPLAINT_PATTERNS) {
+    for (const hint of hints) {
       jobs.push({ query: pattern(hint.name), competitorHint: hint.name });
     }
   }
@@ -158,10 +183,10 @@ async function collectComplaints(
     competitorHint: "unknown",
   });
 
-  const batches = await mapLimit(jobs.slice(0, 16), 4, async (job) => {
+  const batches = await mapLimit(jobs.slice(0, 20), 4, async (job) => {
     try {
       const results = await exaSearch(apiKey, job.query, {
-        numResults: 4,
+        numResults: 5,
         type: "fast",
         maxCharacters: 1600,
         highlightQuery: `${job.competitorHint} complaints problems negative disappointed cancellation`,
@@ -188,12 +213,12 @@ async function enrichWithFirecrawl(
   }
 
   const thin = pages
-    .filter((page) => page.text.length < 500 && !isBrittleHost(page.url) && sourceQuality(page.url) > 0)
-    .slice(0, 4);
+    .filter((page) => page.text.length < 1200 && !isBrittleHost(page.url) && sourceQuality(page.url) > 0)
+    .slice(0, 12);
 
   if (thin.length === 0) return { pages, warnings };
 
-  const scraped = await mapLimit(thin, 2, (page) => firecrawlScrape(apiKey, page.url));
+  const scraped = await mapLimit(thin, 4, (page) => firecrawlScrape(apiKey, page.url));
   const next = pages.map((page) => {
     const matchIndex = thin.findIndex((item) => item.url === page.url);
     if (matchIndex === -1) return page;
@@ -205,7 +230,7 @@ async function enrichWithFirecrawl(
     return {
       ...page,
       title: doc.title || page.title,
-      text: clip(doc.markdown, 2800),
+      text: clip(doc.markdown, 4200),
       publishedAt: page.publishedAt || doc.publishedAt,
       via: "firecrawl" as const,
     };
@@ -231,7 +256,13 @@ function packEvidence(pages: EvidencePage[]) {
     .join("\n\n---\n\n");
 }
 
-function coerceReport(raw: unknown, idea: string, pages: EvidencePage[], warnings: string[]): Report {
+function coerceReport(
+  raw: unknown,
+  idea: string,
+  pages: EvidencePage[],
+  warnings: string[],
+  hints: CompetitorHint[],
+): Report {
   const parsed = reportSchema.safeParse({
     ...(typeof raw === "object" && raw !== null ? raw : {}),
     idea,
@@ -280,15 +311,47 @@ function coerceReport(raw: unknown, idea: string, pages: EvidencePage[], warning
     });
 
   const sourceIds = new Set(sources.map((source) => source.id));
+  const pageById = new Map(pages.map((page) => [page.id, page]));
 
-  return {
+  const wallOfRage = report.wallOfRage
+    .filter((item) => sourceIds.has(item.sourceId))
+    .map((item) => {
+      const hint = pageById.get(item.sourceId)?.competitorHint;
+      if (hint && hint !== "unknown" && !namesMatch(item.competitor, hint)) {
+        const hinted = report.competitors.find((competitor) => namesMatch(competitor.name, hint));
+        if (hinted) return { ...item, competitor: hinted.name };
+      }
+      return item;
+    });
+
+  const competitors = report.competitors
+    .map((competitor) => {
+      const url = officialCompetitorUrl(competitor.name, competitor.url, hints);
+      const ids = competitor.sourceIds.filter((id) => sourceIds.has(id));
+      const fromWall = wallOfRage.filter((item) => namesMatch(item.competitor, competitor.name)).length;
+      const fromPages = pages.filter((page) => {
+        if (page.competitorHint && namesMatch(page.competitorHint, competitor.name)) return true;
+        return hostnameOf(url) && hostnameOf(page.url) === hostnameOf(url);
+      }).length;
+      const feedbackCount = fromWall || fromPages;
+      return {
+        ...competitor,
+        url,
+        sourceIds: ids,
+        feedbackCount,
+        mostCommonComplaint:
+          fromWall > 0
+            ? competitor.mostCommonComplaint
+            : "No complaint excerpts landed in this sample.",
+      };
+    })
+    .filter((competitor) => competitor.feedbackCount > 0 || competitor.sourceIds.length > 0 || competitor.url.startsWith("http"));
+
+  return sanitizeReportCopy({
     ...report,
     sources,
-    wallOfRage: report.wallOfRage.filter((item) => sourceIds.has(item.sourceId)),
-    competitors: report.competitors.map((competitor) => ({
-      ...competitor,
-      sourceIds: competitor.sourceIds.filter((id) => sourceIds.has(id)),
-    })).filter((competitor) => competitor.sourceIds.length > 0 || competitor.url.startsWith("http")),
+    wallOfRage,
+    competitors,
     themes: report.themes.filter((theme) => sourceIds.has(theme.representativeSourceId)),
     opportunities: report.opportunities.map((item) => ({
       ...item,
@@ -300,12 +363,12 @@ function coerceReport(raw: unknown, idea: string, pages: EvidencePage[], warning
     })),
     market: {
       ...report.market,
-      competitorCount: report.competitors.length,
+      competitorCount: competitors.length,
       sourcesAnalyzed: pages.length,
-      negativeFeedbackCount: report.wallOfRage.filter((item) => sourceIds.has(item.sourceId)).length,
+      negativeFeedbackCount: wallOfRage.length,
     },
     warnings,
-  };
+  });
 }
 
 export async function runAnalysis(input: AnalyzeInput): Promise<Report> {
@@ -323,13 +386,13 @@ export async function runAnalysis(input: AnalyzeInput): Promise<Report> {
     );
   }
   if (!isAiConfigured()) {
-    throw new AnalyzeFailure(
-      "missing_keys",
+    const missing =
       env.aiProvider === "xai"
-        ? "XAI_API_KEY is missing. Set it, switch AI_PROVIDER=gemini, or enable DEMO_MODE."
-        : "GEMINI_API_KEY is missing. Set it, switch AI_PROVIDER=xai, or enable DEMO_MODE.",
-      { retryable: false, status: 501 },
-    );
+        ? "XAI_API_KEY is missing. Set it, switch AI_PROVIDER=openai, or enable DEMO_MODE."
+        : env.aiProvider === "openai"
+          ? "OPENAI_API_KEY is missing. Set it, or enable DEMO_MODE."
+          : "GEMINI_API_KEY is missing. Set it, switch AI_PROVIDER=openai, or enable DEMO_MODE.";
+    throw new AnalyzeFailure("missing_keys", missing, { retryable: false, status: 501 });
   }
 
   const warnings: string[] = [];
@@ -376,7 +439,7 @@ export async function runAnalysis(input: AnalyzeInput): Promise<Report> {
     (item) => item.url,
   )
     .sort((a, b) => sourceQuality(b.url) - sourceQuality(a.url) || b.text.length - a.text.length)
-    .slice(0, 15)
+    .slice(0, 24)
     .map((page, index) => ({ ...page, id: `s${index + 1}` }));
 
   const enriched = await enrichWithFirecrawl(env.firecrawlApiKey, merged);
@@ -413,7 +476,7 @@ export async function runAnalysis(input: AnalyzeInput): Promise<Report> {
   }
 
   try {
-    return coerceReport(raw, input.idea, usable, uniqueBy(warnings, (item) => item));
+    return coerceReport(raw, input.idea, usable, uniqueBy(warnings, (item) => item), discovery.hints);
   } catch (error) {
     if (!(error instanceof AnalyzeFailure) || error.code !== "invalid_ai_json") throw error;
     jsonText = await generateReportJson(
@@ -425,6 +488,6 @@ export async function runAnalysis(input: AnalyzeInput): Promise<Report> {
     } catch {
       throw error;
     }
-    return coerceReport(raw, input.idea, usable, uniqueBy(warnings, (item) => item));
+    return coerceReport(raw, input.idea, usable, uniqueBy(warnings, (item) => item), discovery.hints);
   }
 }

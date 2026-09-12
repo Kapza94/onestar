@@ -1,6 +1,14 @@
+import { sameIdea, uniqueRecentIdeas, type RecentIdea } from "./recent";
 import type { AnalyzeError, AppStatus, Report } from "./schemas";
 
 export const STORAGE_KEY = "onestar:last-session";
+export const RECENT_KEY = "onestar:recent-ideas";
+export const REPORTS_KEY = "onestar:saved-reports";
+export const HOME_RECENT = 12;
+const MAX_RECENT = 80;
+const MAX_SAVED_REPORTS = 20;
+
+export type { RecentIdea };
 
 export type Session = {
   idea: string;
@@ -25,6 +33,92 @@ export function saveSession(session: Session) {
   } catch {
     // private mode
   }
+}
+
+export function loadRecentIdeas(): RecentIdea[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = localStorage.getItem(RECENT_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as RecentIdea[];
+    if (!Array.isArray(parsed)) return [];
+    const next = uniqueRecentIdeas(parsed).slice(0, MAX_RECENT);
+    if (JSON.stringify(next) !== raw) {
+      try {
+        localStorage.setItem(RECENT_KEY, JSON.stringify(next));
+      } catch {
+        // private mode
+      }
+    }
+    return next;
+  } catch {
+    return [];
+  }
+}
+
+export function pushRecentIdea(idea: string): RecentIdea[] {
+  const trimmed = idea.trim();
+  if (!trimmed) return loadRecentIdeas();
+  const next = uniqueRecentIdeas([{ idea: trimmed, at: Date.now() }, ...loadRecentIdeas()]).slice(0, MAX_RECENT);
+  try {
+    localStorage.setItem(RECENT_KEY, JSON.stringify(next));
+  } catch {
+    // private mode
+  }
+  return next;
+}
+
+type SavedReport = {
+  idea: string;
+  urls: string;
+  report: Report;
+  at: number;
+};
+
+function loadSavedReportList(): SavedReport[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = localStorage.getItem(REPORTS_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as SavedReport[];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+export function saveIdeaReport(idea: string, urls: string, report: Report) {
+  const trimmed = idea.trim();
+  if (!trimmed || report.mode !== "live") return;
+  const next = [
+    { idea: trimmed, urls, report, at: Date.now() },
+    ...loadSavedReportList().filter((item) => !sameIdea(item.idea, trimmed)),
+  ].slice(0, MAX_SAVED_REPORTS);
+  try {
+    localStorage.setItem(REPORTS_KEY, JSON.stringify(next));
+  } catch {
+    // private mode or quota
+  }
+}
+
+export function findSavedReport(idea: string) {
+  const trimmed = idea.trim();
+  if (!trimmed) return null;
+  return loadSavedReportList().find((item) => sameIdea(item.idea, trimmed)) ?? null;
+}
+
+export async function fetchSearches(page = 1, limit = 20) {
+  const response = await fetch(`/api/searches?page=${page}&limit=${limit}`);
+  if (!response.ok) {
+    return { items: [] as RecentIdea[], page: 1, pageSize: limit, total: 0, pages: 1 };
+  }
+  return (await response.json()) as {
+    items: RecentIdea[];
+    page: number;
+    pageSize: number;
+    total: number;
+    pages: number;
+  };
 }
 
 export async function fetchStatus(): Promise<AppStatus | null> {

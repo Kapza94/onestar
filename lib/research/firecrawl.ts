@@ -21,7 +21,7 @@ export async function firecrawlScrape(
         formats: ["markdown"],
         onlyMainContent: true,
       }),
-      signal: AbortSignal.timeout(20_000),
+      signal: AbortSignal.timeout(12_000),
     });
 
     if (!response.ok) return null;
@@ -40,7 +40,7 @@ export async function firecrawlScrape(
     return {
       url: json.data?.metadata?.url || url,
       title: json.data?.metadata?.title || new URL(url).hostname,
-      markdown: markdown.slice(0, 5000),
+      markdown: markdown.slice(0, 8000),
       publishedAt: json.data?.metadata?.publishedTime ?? null,
     };
   } catch {
