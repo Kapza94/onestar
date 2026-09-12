@@ -24,7 +24,6 @@ import type { PresenceSnapshot } from "@/lib/presence/store";
 import type { AnalyzeError, AppStatus, Report } from "@/lib/schemas";
 import { ErrorScreen } from "./error-screen";
 import { Landing } from "./landing";
-import { LivePresence } from "./live-presence";
 import { ReportView } from "./report-view";
 import { ResearchScreen } from "./research-screen";
 import { TopNav } from "./top-nav";
@@ -65,7 +64,7 @@ export function OneStarApp() {
   const [status, setStatus] = useState<AppStatus | null>(null);
   const [, setRecent] = useState<RecentIdea[]>([]);
   const [, setArchiveTotal] = useState(0);
-  const [presence, setPresence] = useState<PresenceSnapshot | null>(null);
+  const [, setPresence] = useState<PresenceSnapshot | null>(null);
   const requestSeq = useRef(0);
   const running = useRef(false);
 
@@ -308,7 +307,6 @@ export function OneStarApp() {
             />
           ) : null}
           {view !== "research" && report ? <ReportView report={report} /> : null}
-          <LivePresence snapshot={presence} />
         </>
       )}
     </div>

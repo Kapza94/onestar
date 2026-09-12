@@ -35,14 +35,15 @@ export function ReportView({ report: raw }: { report: Report }) {
   }
 
   return (
-    <div ref={topRef} id="report" className="scroll-mt-0 border-t border-line">
-      <nav className="sticky top-0 z-30 border-b border-line bg-bg/85 backdrop-blur">
-        <div className="mx-auto flex max-w-[1180px] items-center gap-4 px-4 md:px-6">
-          <div
-            className="-mx-4 flex flex-1 gap-1 overflow-x-auto px-4 py-3 [scrollbar-width:none] md:mx-0 md:px-0 [&::-webkit-scrollbar]:hidden"
-            role="tablist"
-            aria-label="Report sections"
-          >
+    <div id="report" className="bg-bg">
+      <div ref={topRef} className="mx-auto max-w-[1120px] scroll-mt-6 px-5 py-10 md:px-8 md:py-14">
+        <div className="overflow-hidden rounded-xl border border-line">
+          <div className="flex items-center gap-3 border-b border-line bg-bg-elev/40 px-3 py-2.5 md:px-4">
+            <div
+              className="flex flex-1 gap-1 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+              role="tablist"
+              aria-label="Report sections"
+            >
             {TABS.map((tab) => {
               const active = tab.id === activeTab;
               return (
@@ -62,21 +63,20 @@ export function ReportView({ report: raw }: { report: Report }) {
                 </button>
               );
             })}
+            </div>
+            <span className="hidden shrink-0 sm:inline-flex">
+              {report.mode === "demo" ? <Stamp tone="acid">example data</Stamp> : <Stamp>live research</Stamp>}
+            </span>
           </div>
-          <span className="hidden shrink-0 sm:inline-flex">
-            {report.mode === "demo" ? <Stamp tone="acid">example data</Stamp> : <Stamp>live research</Stamp>}
-          </span>
-        </div>
-      </nav>
 
-      <div className="mx-auto max-w-[1180px] px-4 py-10 md:px-6 md:py-16">
+          <div className="px-5 py-10 md:px-10 md:py-12">
         {activeTab === "snapshot" ? (
           <section>
-            <p className="font-label text-[12px] uppercase tracking-[0.18em] text-acid">market snapshot</p>
-            <h1 className="mt-4 max-w-[22ch] text-[clamp(2.1rem,5vw,4.2rem)] font-semibold leading-[0.95] tracking-[-0.05em]">
+            <p className="font-label text-[11px] uppercase tracking-[0.2em] text-acid">market snapshot</p>
+            <h1 className="mt-4 max-w-[34ch] text-[clamp(1.5rem,2.6vw,2.15rem)] font-medium leading-[1.2] tracking-[-0.02em]">
               {report.market.interpretedIdea}
             </h1>
-            <p className="mt-6 max-w-[62ch] text-xl leading-9 text-muted">
+            <p className="mt-5 max-w-[64ch] text-[15px] leading-7 text-muted line-clamp-4">
               {report.market.opportunityVerdict}
             </p>
             <dl className="mt-10 grid grid-cols-2 gap-px bg-line md:grid-cols-4">
@@ -500,6 +500,8 @@ export function ReportView({ report: raw }: { report: Report }) {
           ) : (
             <span />
           )}
+          </div>
+        </div>
         </div>
       </div>
     </div>
@@ -526,7 +528,7 @@ function SectionHead({
       >
         {kicker}
       </p>
-      <h2 className="mt-2 text-[clamp(1.8rem,4vw,3rem)] font-semibold tracking-[-0.045em]">{title}</h2>
+      <h2 className="mt-2 text-[clamp(1.4rem,2.6vw,2.1rem)] font-medium tracking-[-0.03em]">{title}</h2>
     </div>
   );
 }
