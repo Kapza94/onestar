@@ -1,4 +1,5 @@
 import { AnalyzeFailure } from "@/lib/errors";
+import { checkAnalyzeRateLimit } from "@/lib/rate-limit";
 import { runAnalysis } from "@/lib/research/pipeline";
 import { analyzeInputSchema } from "@/lib/schemas";
 
@@ -20,6 +21,41 @@ function parseUrls(value: unknown): string[] {
 
 export async function POST(request: Request) {
   try {
+    if (process.env.RESEARCH_ENABLED === "false") {
+      return Response.json(
+        {
+          ok: false,
+          error: {
+            code: "research_paused",
+            message: "Research is temporarily paused. Try again later.",
+            retryable: true,
+          },
+        },
+        { status: 503, headers: { "Retry-After": "300" } },
+      );
+    }
+
+    const rateLimit = await checkAnalyzeRateLimit(request);
+    if (!rateLimit.allowed) {
+      const overloaded = rateLimit.reason === "global" || rateLimit.reason === "unavailable";
+      return Response.json(
+        {
+          ok: false,
+          error: {
+            code: overloaded ? "research_busy" : "rate_limited",
+            message: overloaded
+              ? "Research is busy right now. Try again in a minute."
+              : "You’ve reached the research limit. Try again in a minute.",
+            retryable: true,
+          },
+        },
+        {
+          status: overloaded ? 503 : 429,
+          headers: { "Retry-After": String(rateLimit.retryAfterSeconds) },
+        },
+      );
+    }
+
     const body = (await request.json()) as { idea?: unknown; competitorUrls?: unknown };
     const urls = parseUrls(body.competitorUrls).map((item) => {
       if (/^https?:\/\//i.test(item)) return item;
