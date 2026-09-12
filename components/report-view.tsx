@@ -1,618 +1,80 @@
 "use client";
 
-import { useRef, useState } from "react";
-import { ArrowUpRight, ChevronDown, ChevronLeft, ChevronRight } from "lucide-react";
+import { useRef, useState, type ReactNode } from "react";
+import { ArrowUpRight, Check, ChevronDown, ChevronLeft, ChevronRight, Copy, Download, ExternalLink } from "lucide-react";
 import { formatDate, sourceById } from "@/lib/client";
-import { sanitizeReportCopy, withEvidenceCounts } from "@/lib/copy";
-import type { Report } from "@/lib/schemas";
+import { namesMatch, sanitizeReportCopy, withEvidenceCounts } from "@/lib/copy";
+import type { Confidence, Report } from "@/lib/schemas";
 import { ConfidenceMark, Stamp } from "./stamp";
 
 const TABS = [
-  { id: "snapshot", label: "Snapshot" },
-  { id: "competitors", label: "Competitors" },
-  { id: "rage", label: "Wall of Rage" },
-  { id: "heatmap", label: "Heatmap" },
-  { id: "opportunities", label: "Opportunities" },
-  { id: "build", label: "Build this" },
-  { id: "blueprint", label: "Blueprint" },
+  { id: "snapshot", label: "Snapshot" }, { id: "competitors", label: "Competitors" },
+  { id: "rage", label: "Wall of Rage" }, { id: "heatmap", label: "Heatmap" },
+  { id: "decisions", label: "Decisions" }, { id: "blueprint", label: "Blueprint" },
   { id: "sources", label: "Sources" },
 ] as const;
-
 type TabId = (typeof TABS)[number]["id"];
+type RageRating = "all" | "rated" | "mention";
 
 export function ReportView({ report: raw }: { report: Report }) {
   const report = withEvidenceCounts(sanitizeReportCopy(raw));
-  const maxTheme = Math.max(...report.themes.map((theme) => theme.evidenceCount), 1);
-
   const [activeTab, setActiveTab] = useState<TabId>("snapshot");
+  const [selectedOpportunityId, setSelectedOpportunityId] = useState(report.opportunities[0]?.id ?? "");
+  const [rageCompetitor, setRageCompetitor] = useState("all");
+  const [rageCategory, setRageCategory] = useState("all");
+  const [rageRating, setRageRating] = useState<RageRating>("all");
+  const [copyState, setCopyState] = useState<"idle" | "copied">("idle");
   const topRef = useRef<HTMLDivElement>(null);
-
+  const selectedOpportunity = report.opportunities.find((item) => item.id === selectedOpportunityId) ?? report.opportunities[0];
+  const defaultPrompt = selectedOpportunity ? agentPrompt(report, selectedOpportunity) : "";
+  const [prompt, setPrompt] = useState(() => defaultPrompt);
+  const rageItems = report.wallOfRage.filter((item) =>
+    (rageCompetitor === "all" || namesMatch(item.competitor, rageCompetitor)) &&
+    (rageCategory === "all" || item.category === rageCategory) &&
+    (rageRating === "all" || (rageRating === "rated" ? item.rating !== null : item.rating === null)),
+  );
   const activeIndex = TABS.findIndex((tab) => tab.id === activeTab);
+  const activeFilters = [rageCompetitor, rageCategory, rageRating].filter((item) => item !== "all").length;
+  const directCompetitors = report.competitors.filter((competitor) => relevanceOf(competitor) === "direct");
+  const adjacentCompetitors = report.competitors.filter((competitor) => relevanceOf(competitor) === "adjacent");
+  function changeTab(id: TabId) { setActiveTab(id); topRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }); }
+  function selectOpportunity(id: string) { const item = report.opportunities.find((opportunity) => opportunity.id === id) ?? report.opportunities[0]; setSelectedOpportunityId(id); if (item) setPrompt(agentPrompt(report, item)); }
+  async function copyPrompt() { try { await navigator.clipboard.writeText(prompt); setCopyState("copied"); window.setTimeout(() => setCopyState("idle"), 1800); } catch { setCopyState("idle"); } }
+  function downloadPrompt() { const blob = new Blob([prompt], { type: "text/markdown;charset=utf-8" }); const url = URL.createObjectURL(blob); const anchor = document.createElement("a"); anchor.href = url; anchor.download = "onestar-agent-brief.md"; anchor.click(); URL.revokeObjectURL(url); }
 
-  function changeTab(id: TabId) {
-    setActiveTab(id);
-    topRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
-  }
-
-  return (
-    <div id="report" className="bg-bg">
-      <div ref={topRef} className="mx-auto max-w-[1120px] scroll-mt-6 px-5 py-10 md:px-8 md:py-14">
-        <div className="overflow-hidden rounded-xl border border-line">
-          <div className="flex items-center gap-3 border-b border-line bg-bg-elev/40 px-3 py-2.5 md:px-4">
-            <div
-              className="flex flex-1 gap-1 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
-              role="tablist"
-              aria-label="Report sections"
-            >
-            {TABS.map((tab) => {
-              const active = tab.id === activeTab;
-              return (
-                <button
-                  key={tab.id}
-                  type="button"
-                  role="tab"
-                  aria-selected={active}
-                  onClick={() => changeTab(tab.id)}
-                  className={`shrink-0 whitespace-nowrap rounded-full px-3.5 py-1.5 font-label text-[11px] uppercase tracking-[0.14em] transition-colors ${
-                    active
-                      ? "bg-acid text-bg"
-                      : "text-muted hover:bg-bg-elev hover:text-fg"
-                  }`}
-                >
-                  {tab.label}
-                </button>
-              );
-            })}
-            </div>
-            <span className="hidden shrink-0 sm:inline-flex">
-              {report.mode === "demo" ? <Stamp tone="acid">example data</Stamp> : <Stamp>live research</Stamp>}
-            </span>
-          </div>
-
-          <div className="px-5 py-10 md:px-10 md:py-12">
-        {activeTab === "snapshot" ? (
-          <section>
-            <p className="font-label text-[11px] uppercase tracking-[0.2em] text-acid">market snapshot</p>
-            <h1 className="mt-4 max-w-[34ch] text-[clamp(1.5rem,2.6vw,2.15rem)] font-medium leading-[1.2] tracking-[-0.02em]">
-              {report.market.interpretedIdea}
-            </h1>
-            <p className="mt-5 max-w-[64ch] text-[15px] leading-7 text-muted line-clamp-4">
-              {report.market.opportunityVerdict}
-            </p>
-            <dl className="mt-10 grid grid-cols-2 gap-px bg-line md:grid-cols-4">
-              {[
-                ["Target", report.market.targetCustomer],
-                ["Category", report.market.productCategory],
-                ["Competitors", String(report.market.competitorCount)],
-                ["Sources", String(report.market.sourcesAnalyzed)],
-              ].map(([label, value]) => (
-                <div key={label} className="bg-bg px-4 py-5">
-                  <dt className="font-label text-[11px] uppercase tracking-[0.16em] text-faint">{label}</dt>
-                  <dd className="mt-2 text-base leading-7 text-fg">{value}</dd>
-                </div>
-              ))}
-            </dl>
-            <p className="mt-4 font-label text-[12px] uppercase tracking-[0.14em] text-rage">
-              {report.market.negativeFeedbackCount} negative items in this sample
-            </p>
-            {report.competitors.length ? (
-              <div className="mt-10">
-                <p className="font-label text-[11px] uppercase tracking-[0.16em] text-faint">similar products</p>
-                <ul className="mt-4 flex flex-wrap gap-2">
-                  {report.competitors.map((competitor) => (
-                    <li key={`${competitor.name}-${competitor.url}`}>
-                      <CompetitorChip name={competitor.name} url={competitor.url} />
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            ) : null}
-          </section>
-        ) : null}
-
-        {activeTab === "competitors" ? (
-          <section>
-            <SectionHead kicker="01" title="Competitors" />
-            <div className="mt-8 divide-y divide-line border-y border-line">
-              {report.competitors.map((competitor) => (
-                <article key={competitor.url} className="grid gap-6 py-8 md:grid-cols-[minmax(0,1.1fr)_minmax(0,0.9fr)]">
-                  <div>
-                    <div className="flex flex-wrap items-center gap-3">
-                      <h3 className="text-2xl font-semibold tracking-[-0.03em]">
-                        <CompetitorName name={competitor.name} url={competitor.url} />
-                      </h3>
-                      <ConfidenceMark value={competitor.confidence} />
-                    </div>
-                    {hostOf(competitor.url) ? (
-                      <a
-                        href={competitor.url}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="mt-2 inline-flex items-center gap-1 text-sm text-acid hover:underline"
-                      >
-                        {hostOf(competitor.url)} <ArrowUpRight className="h-3.5 w-3.5" />
-                      </a>
-                    ) : null}
-                    <p className="mt-3 max-w-[50ch] text-muted">{competitor.description}</p>
-                    <p className="mt-4 text-sm text-faint">
-                      Audience: <span className="text-fg">{competitor.targetAudience}</span>
-                    </p>
-                    <p className="mt-1 text-sm text-faint">
-                      Pricing:{" "}
-                      <span className="text-fg">{competitor.pricing ?? "Unknown in this sample"}</span>
-                    </p>
-                  </div>
-                  <div className="md:text-right">
-                    <p className="text-lg leading-8 text-rage">
-                      “{competitor.mostCommonComplaint}”
-                    </p>
-                    <p className="mt-3 font-label text-[12px] uppercase tracking-[0.14em] text-faint">
-                      {competitor.feedbackCount > 0
-                        ? `${competitor.feedbackCount} ${competitor.feedbackCount === 1 ? "complaint" : "complaints"} in this sample`
-                        : "no complaints in this sample"}
-                    </p>
-                    <div className="mt-4 flex flex-wrap gap-3 md:justify-end">
-                      {competitor.sourceIds.map((id) => {
-                        const source = sourceById(report.sources, id);
-                        if (!source) return null;
-                        return (
-                          <a
-                            key={id}
-                            href={source.url}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="font-label text-[12px] uppercase tracking-[0.14em] text-muted hover:text-fg"
-                          >
-                            {source.domain}
-                          </a>
-                        );
-                      })}
-                    </div>
-                  </div>
-                </article>
-              ))}
-            </div>
-          </section>
-        ) : null}
-
-        {activeTab === "rage" ? (
-          <section className="relative py-6">
-            <div
-              aria-hidden
-              className="pointer-events-none absolute inset-x-[-1.5rem] top-0 h-full bg-[radial-gradient(900px_420px_at_10%_0%,oklch(0.42_0.16_32/0.22),transparent_70%)] md:inset-x-[-3rem]"
-            />
-            <SectionHead kicker="02" title="Wall of Rage" rage />
-            <p className="mt-3 max-w-[50ch] text-muted">
-              Short excerpts only. If a score was not published, it is labeled Negative mention, not a 1-star review.
-            </p>
-            <div className="mt-10 columns-1 gap-4 sm:columns-2 lg:columns-3">
-              {report.wallOfRage.map((item, index) => (
-                <article
-                  key={item.id}
-                  className={`mb-4 break-inside-avoid rounded-2xl border border-rage/25 bg-rage-dim/40 p-4 ${
-                    index % 3 === 1 ? "md:translate-y-3" : index % 3 === 2 ? "md:-translate-y-2" : ""
-                  }`}
-                >
-                  <p className="text-[1.05rem] leading-7 text-fg">“{item.excerpt}”</p>
-                  <div className="mt-4 flex flex-wrap items-center gap-2">
-                    <Stamp tone="rage">{item.category}</Stamp>
-                    {item.rating === null ? (
-                      <Stamp>Negative mention</Stamp>
-                    ) : (
-                      <Stamp tone="rage">{item.rating}/5</Stamp>
-                    )}
-                  </div>
-                  <p className="mt-3 font-label text-[11px] uppercase tracking-[0.14em] text-muted">
-                    <CompetitorName
-                      name={item.competitor}
-                      url={matchCompetitor(report.competitors, item.competitor)?.url}
-                      className="text-muted hover:text-acid"
-                    />
-                    {" · "}
-                    {item.platform}
-                    {formatDate(item.publishedAt) ? ` · ${formatDate(item.publishedAt)}` : ""}
-                  </p>
-                  <SourceLink report={report} id={item.sourceId} />
-                </article>
-              ))}
-            </div>
-          </section>
-        ) : null}
-
-        {activeTab === "heatmap" ? (
-          <section>
-            <SectionHead kicker="03" title="Complaint heatmap" />
-            <p className="mt-3 max-w-[54ch] text-muted">
-              Frequency is the count of items in this collected sample, not the entire market.
-            </p>
-            <ul className="mt-8 space-y-5">
-              {report.themes.map((theme) => (
-                <li key={theme.id}>
-                  <div className="flex flex-wrap items-end justify-between gap-3">
-                    <div>
-                      <p className="text-xl font-semibold tracking-[-0.03em]">{theme.theme}</p>
-                      <p className="mt-1 flex flex-wrap gap-x-2 gap-y-1 text-sm text-muted">
-                        {theme.competitorsAffected.map((name, index) => (
-                          <span key={`${theme.id}-${name}`} className="inline-flex items-center gap-2">
-                            {index > 0 ? <span className="text-faint">·</span> : null}
-                            <CompetitorName
-                              name={name}
-                              url={matchCompetitor(report.competitors, name)?.url}
-                              className="text-muted hover:text-acid"
-                            />
-                          </span>
-                        ))}
-                      </p>
-                    </div>
-                    <p className="font-label text-[12px] uppercase tracking-[0.14em] text-faint">
-                      {theme.evidenceCount} items · {theme.severity}
-                    </p>
-                  </div>
-                  <div className="mt-3 h-[6px] bg-line">
-                    <div
-                      className={`h-full ${
-                        theme.severity === "critical" || theme.severity === "high"
-                          ? "bg-rage"
-                          : theme.severity === "medium"
-                            ? "bg-fg/55"
-                            : "bg-faint"
-                      }`}
-                      style={{ width: `${Math.max(8, (theme.evidenceCount / maxTheme) * 100)}%` }}
-                    />
-                  </div>
-                  <p className="mt-3 max-w-[70ch] text-sm leading-6 text-muted">{theme.explanation}</p>
-                  <SourceLink report={report} id={theme.representativeSourceId} />
-                </li>
-              ))}
-            </ul>
-          </section>
-        ) : null}
-
-        {activeTab === "opportunities" ? (
-          <section>
-            <SectionHead kicker="04" title="Opportunity map" acid />
-            <div className="mt-8 space-y-8">
-              {report.opportunities.map((item, index) => (
-                <article key={item.id} className="grid gap-6 border-t border-line pt-8 md:grid-cols-[4rem_minmax(0,1fr)]">
-                  <p className="font-label text-2xl text-acid">{String(index + 1).padStart(2, "0")}</p>
-                  <div className="grid gap-6 md:grid-cols-2">
-                    <div>
-                      <p className="font-label text-[11px] uppercase tracking-[0.16em] text-faint">Pain</p>
-                      <p className="mt-2 text-lg leading-8">{item.customerPain}</p>
-                      <p className="mt-4 font-label text-[11px] uppercase tracking-[0.16em] text-faint">
-                        Competitor weakness
-                      </p>
-                      <p className="mt-2 text-muted">{item.competitorWeakness}</p>
-                    </div>
-                    <div>
-                      <p className="font-label text-[11px] uppercase tracking-[0.16em] text-acid">Build</p>
-                      <p className="mt-2 text-lg leading-8">{item.recommendedSolution}</p>
-                      <p className="mt-4 text-sm text-muted">For {item.targetSegment}</p>
-                      <div className="mt-3">
-                        <ConfidenceMark value={item.confidence} />
-                      </div>
-                      <div className="mt-3 flex flex-wrap gap-3">
-                        {item.evidenceSourceIds.map((id) => (
-                          <SourceLink key={id} report={report} id={id} />
-                        ))}
-                      </div>
-                    </div>
-                  </div>
-                </article>
-              ))}
-            </div>
-          </section>
-        ) : null}
-
-        {activeTab === "build" ? (
-          <section>
-            <SectionHead kicker="05" title="Build this, not that" />
-            <div className="mt-8 divide-y divide-line border-y border-line">
-              {report.buildThisNotThat.map((item) => (
-                <article key={item.build} className="grid gap-4 py-8 md:grid-cols-2">
-                  <div>
-                    <p className="font-label text-[11px] uppercase tracking-[0.16em] text-acid">Build</p>
-                    <p className="mt-2 text-2xl font-semibold tracking-[-0.03em]">{item.build}</p>
-                  </div>
-                  <div>
-                    <p className="font-label text-[11px] uppercase tracking-[0.16em] text-rage">Not</p>
-                    <p className="mt-2 text-2xl font-semibold tracking-[-0.03em] text-muted">{item.notThat}</p>
-                    <p className="mt-4 text-lg leading-8 text-muted">because {item.because}</p>
-                    <div className="mt-3 flex flex-wrap gap-2">
-                      {report.competitors
-                        .filter((competitor) =>
-                          [item.build, item.notThat, item.because].some((text) =>
-                            text.toLowerCase().includes(competitor.name.toLowerCase()),
-                          ),
-                        )
-                        .map((competitor) => (
-                          <CompetitorChip key={competitor.url} name={competitor.name} url={competitor.url} />
-                        ))}
-                    </div>
-                    <div className="mt-3 flex flex-wrap gap-3">
-                      {item.sourceIds.map((id) => (
-                        <SourceLink key={id} report={report} id={id} />
-                      ))}
-                    </div>
-                  </div>
-                </article>
-              ))}
-            </div>
-          </section>
-        ) : null}
-
-        {activeTab === "blueprint" ? (
-          <section className="relative rounded-3xl border border-acid/20 bg-acid-dim/30 p-5 md:p-10">
-            <SectionHead kicker="06" title="Better-product blueprint" acid />
-            <div className="mt-10 grid gap-10 md:grid-cols-2">
-              <BlueprintBlock label="Underserved niche" body={report.blueprint.underservedNiche} />
-              <BlueprintBlock label="Positioning" body={report.blueprint.positioning} />
-              <BlueprintBlock label="Core differentiator" body={report.blueprint.coreDifferentiator} />
-              <BlueprintBlock label="Smallest viable MVP" body={report.blueprint.smallestViableMvp} />
-              <BlueprintBlock label="Pricing hypothesis" body={report.blueprint.pricingHypothesis} />
-              <BlueprintBlock label="Distribution wedge" body={report.blueprint.distributionWedge} />
-            </div>
-            <div className="mt-10 grid gap-8 md:grid-cols-2">
-              <div>
-                <p className="font-label text-[11px] uppercase tracking-[0.16em] text-acid">Build first</p>
-                <ol className="mt-3 space-y-3">
-                  {report.blueprint.featuresToBuildFirst.map((item, index) => (
-                    <li key={item} className="flex gap-3">
-                      <span className="font-label text-acid">{String(index + 1).padStart(2, "0")}</span>
-                      <span>{item}</span>
-                    </li>
-                  ))}
-                </ol>
-              </div>
-              <div>
-                <p className="font-label text-[11px] uppercase tracking-[0.16em] text-rage">Avoid</p>
-                <ol className="mt-3 space-y-3 text-muted">
-                  {report.blueprint.featuresToAvoid.map((item, index) => (
-                    <li key={item} className="flex gap-3">
-                      <span className="font-label text-rage">{String(index + 1).padStart(2, "0")}</span>
-                      <span>{item}</span>
-                    </li>
-                  ))}
-                </ol>
-              </div>
-            </div>
-            <div className="mt-10">
-              <p className="font-label text-[11px] uppercase tracking-[0.16em] text-faint">
-                Critical assumptions
-              </p>
-              <ul className="mt-3 space-y-2">
-                {report.blueprint.criticalAssumptions.map((item) => (
-                  <li key={item} className="text-muted">
-                    {item}
-                  </li>
-                ))}
-              </ul>
-            </div>
-            <div className="mt-10">
-              <p className="font-label text-[11px] uppercase tracking-[0.16em] text-acid">
-                Seven-day validation
-              </p>
-              <ol className="mt-4 space-y-4">
-                {report.blueprint.validationPlan.map((day) => (
-                  <li key={day.day} className="grid gap-2 border-t border-line/80 pt-4 md:grid-cols-[4rem_minmax(0,1fr)]">
-                    <p className="font-label text-acid">Day {day.day}</p>
-                    <div>
-                      <p>{day.action}</p>
-                      <p className="mt-1 text-sm text-muted">Pass if: {day.successSignal}</p>
-                    </div>
-                  </li>
-                ))}
-              </ol>
-            </div>
-            <div className="mt-12 border-t border-acid/20 pt-8">
-              <p className="font-label text-[11px] uppercase tracking-[0.16em] text-faint">Pitch</p>
-              <p className="mt-3 max-w-[50ch] text-2xl font-semibold tracking-[-0.03em]">
-                {report.blueprint.rewrittenPitch}
-              </p>
-              <p className="mt-8 font-label text-[11px] uppercase tracking-[0.16em] text-faint">
-                landing headline
-              </p>
-              <p className="mt-3 text-3xl leading-tight md:text-4xl">
-                {report.blueprint.landingHeadline}
-              </p>
-              <p className="mt-6 inline-flex rounded-full bg-acid px-5 py-3 font-medium text-bg">
-                {report.blueprint.primaryCta}
-              </p>
-            </div>
-          </section>
-        ) : null}
-
-        {activeTab === "sources" ? (
-          <section>
-            <SectionHead kicker="07" title="Sources" />
-            <details className="group mt-8 rounded-2xl border border-line">
-              <summary className="flex cursor-pointer list-none items-center justify-between px-4 py-4">
-                <span className="font-semibold tracking-[-0.03em]">All sources</span>
-                <ChevronDown className="h-4 w-4 text-muted transition-transform group-open:rotate-180" />
-              </summary>
-              <ul className="divide-y divide-line border-t border-line">
-                {report.sources.map((source) => (
-                  <li key={source.id} className="px-4 py-4">
-                    <a
-                      href={source.url}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="inline-flex items-center gap-1 font-medium hover:text-acid"
-                    >
-                      {source.title} <ArrowUpRight className="h-3.5 w-3.5" />
-                    </a>
-                    <p className="mt-1 font-label text-[12px] uppercase tracking-[0.14em] text-faint">
-                      {source.domain}
-                      {formatDate(source.publishedAt) ? ` · ${formatDate(source.publishedAt)}` : ""}
-                    </p>
-                    <p className="mt-2 text-sm text-muted">{source.findings}</p>
-                  </li>
-                ))}
-              </ul>
-            </details>
-            <ul className="mt-6 space-y-2">
-              {report.caveats.map((item) => (
-                <li key={item} className="text-sm text-faint">
-                  {item}
-                </li>
-              ))}
-            </ul>
-            {report.warnings.length > 0 ? (
-              <ul className="mt-4 space-y-2">
-                {report.warnings.map((item) => (
-                  <li key={item} className="text-sm text-rage/80">
-                    {item}
-                  </li>
-                ))}
-              </ul>
-            ) : null}
-          </section>
-        ) : null}
-
-        <div className="mt-16 flex items-center justify-between gap-4 border-t border-line pt-8">
-          {activeIndex > 0 ? (
-            <button
-              type="button"
-              onClick={() => changeTab(TABS[activeIndex - 1].id)}
-              className="group inline-flex items-center gap-2 text-left text-muted transition-colors hover:text-fg"
-            >
-              <ChevronLeft className="h-4 w-4 shrink-0 text-faint transition-colors group-hover:text-acid" />
-              <span>
-                <span className="block font-label text-[10px] uppercase tracking-[0.16em] text-faint">Previous</span>
-                <span className="text-sm font-medium">{TABS[activeIndex - 1].label}</span>
-              </span>
-            </button>
-          ) : (
-            <span />
-          )}
-          {activeIndex < TABS.length - 1 ? (
-            <button
-              type="button"
-              onClick={() => changeTab(TABS[activeIndex + 1].id)}
-              className="group inline-flex items-center gap-2 text-right text-muted transition-colors hover:text-fg"
-            >
-              <span>
-                <span className="block font-label text-[10px] uppercase tracking-[0.16em] text-faint">Next</span>
-                <span className="text-sm font-medium">{TABS[activeIndex + 1].label}</span>
-              </span>
-              <ChevronRight className="h-4 w-4 shrink-0 text-faint transition-colors group-hover:text-acid" />
-            </button>
-          ) : (
-            <span />
-          )}
-          </div>
-        </div>
-        </div>
-      </div>
-    </div>
-  );
+  return <div id="report" className="bg-bg"><div ref={topRef} className="mx-auto max-w-[1180px] scroll-mt-6 px-4 py-7 sm:px-6 md:px-8 md:py-12"><div className="overflow-hidden rounded-2xl border border-line bg-bg">
+    <div className="border-b border-line bg-bg-elev/40 px-3 py-2.5 md:px-4"><div className="flex items-center gap-3"><div className="flex flex-1 gap-1 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden" role="tablist" aria-label="Report sections">{TABS.map((tab) => <button key={tab.id} type="button" role="tab" aria-selected={tab.id === activeTab} onClick={() => changeTab(tab.id)} className={`shrink-0 whitespace-nowrap rounded-full px-3.5 py-1.5 font-label text-[11px] uppercase tracking-[0.14em] transition-colors ${tab.id === activeTab ? "bg-acid text-bg" : "text-muted hover:bg-bg-elev hover:text-fg"}`}>{tab.label}</button>)}</div><span className="hidden shrink-0 sm:inline-flex">{report.mode === "demo" ? <Stamp tone="acid">example data</Stamp> : <Stamp>live research</Stamp>}</span></div></div>
+    <div className="px-4 py-7 sm:px-6 md:px-10 md:py-10">
+      {activeTab === "snapshot" && <section><div className="grid gap-8 lg:grid-cols-[minmax(0,1.25fr)_minmax(16rem,.75fr)] lg:items-end"><div><p className="font-label text-[11px] uppercase tracking-[.2em] text-acid">Decision brief</p><h1 className="mt-3 max-w-[23ch] text-[clamp(1.8rem,4vw,3.25rem)] font-medium leading-[1.03] tracking-[-.045em]">Test this wedge before building product.</h1><p className="mt-5 max-w-[62ch] text-[15px] leading-7 text-muted">{report.market.opportunityVerdict}</p></div>{selectedOpportunity && <div className="border border-acid/30 bg-acid-dim/35 p-5"><p className="font-label text-[11px] uppercase tracking-[.16em] text-acid">Best first bet</p><p className="mt-3 text-lg leading-7">{selectedOpportunity.recommendedSolution}</p><button type="button" onClick={() => changeTab("decisions")} className="mt-5 inline-flex items-center gap-2 font-label text-[11px] uppercase tracking-[.14em] text-acid hover:text-fg">Open decision flow <ChevronRight className="h-3.5 w-3.5" /></button></div>}</div><dl className="mt-9 grid gap-px border border-line bg-line sm:grid-cols-2 lg:grid-cols-4">{[["Who first", report.market.targetCustomer], ["Market shape", report.market.productCategory], ["Signal", `${report.market.negativeFeedbackCount} negative items`], ["Evidence", `${report.market.sourcesAnalyzed} sources analyzed`]].map(([label, value]) => <div key={label} className="bg-bg p-4 md:p-5"><dt className="font-label text-[10px] uppercase tracking-[.16em] text-faint">{label}</dt><dd className="mt-2 text-sm leading-6 text-fg">{value}</dd></div>)}</dl><div className="mt-8 border-t border-line pt-5"><p className="font-label text-[10px] uppercase tracking-[.16em] text-faint">Market read</p><p className="mt-2 max-w-[70ch] text-lg leading-8">{report.market.interpretedIdea}</p></div></section>}
+      {activeTab === "competitors" && <section><SectionHead kicker="01" title="Competitor scan" /><p className="mt-3 max-w-[64ch] text-sm leading-6 text-muted">Likely direct products compete for this job now. Adjacent products own nearby behavior, not this decision.</p><CompetitorTable report={report} title="Direct alternatives" competitors={directCompetitors} relevance="direct" /><CompetitorTable report={report} title="Adjacent alternatives" competitors={adjacentCompetitors} relevance="adjacent" /></section>}
+      {activeTab === "rage" && <section><SectionHead kicker="02" title="Wall of Rage" rage /><p className="mt-3 max-w-[66ch] text-sm leading-6 text-muted">Collected excerpts, normalized for scan. No rating means negative mention, not a one-star review.</p><div className="mt-6 grid gap-3 rounded-xl border border-line bg-bg-elev/30 p-3 sm:grid-cols-3"><FilterSelect label="Competitor" value={rageCompetitor} onChange={setRageCompetitor} options={["all", ...report.competitors.map((item) => item.name)]} /><FilterSelect label="Theme" value={rageCategory} onChange={setRageCategory} options={["all", ...unique(report.wallOfRage.map((item) => item.category))]} /><FilterSelect label="Rating state" value={rageRating} onChange={(value) => setRageRating(value as RageRating)} options={["all", "rated", "mention"]} /><div className="sm:col-span-3 flex items-center justify-between border-t border-line pt-3 font-label text-[10px] uppercase tracking-[.14em] text-faint"><span>{rageItems.length} of {report.wallOfRage.length} items · {activeFilters} filters</span>{activeFilters ? <button type="button" onClick={() => { setRageCompetitor("all"); setRageCategory("all"); setRageRating("all"); }} className="text-acid hover:text-fg">clear filters</button> : null}</div></div><div className="mt-6 grid gap-3 lg:grid-cols-2">{rageItems.map((item) => <article key={item.id} className="rounded-xl border border-rage/25 bg-rage-dim/25 p-4"><p className="font-serif text-[1.03rem] leading-7 text-fg">“{item.excerpt}”</p><div className="mt-4 flex flex-wrap gap-2"><Stamp tone="rage">{item.category}</Stamp>{item.rating === null ? <Stamp>negative mention</Stamp> : <Stamp tone="rage">{item.rating}/5</Stamp>}</div><div className="mt-4 flex flex-wrap items-center justify-between gap-2 font-label text-[10px] uppercase tracking-[.13em] text-muted"><span><CompetitorName name={item.competitor} url={matchCompetitor(report.competitors, item.competitor)?.url} className="text-muted hover:text-acid" /> · {item.platform}{formatDate(item.publishedAt) ? ` · ${formatDate(item.publishedAt)}` : ""}</span><SourceLink report={report} id={item.sourceId} /></div></article>)}</div>{!rageItems.length && <EmptyState>Nothing matches filters.</EmptyState>}</section>}
+      {activeTab === "heatmap" && <section><SectionHead kicker="03" title="Complaint heatmap" /><p className="mt-3 max-w-[70ch] text-sm leading-6 text-muted">Matrix records whether collected evidence connects theme to competitor. Frequency, severity, and confidence stay separate. “No evidence” means none collected here, not no market problem.</p><div className="mt-7 overflow-x-auto rounded-xl border border-line"><table className="w-full min-w-[880px] border-collapse text-left"><thead className="bg-bg-elev/70 font-label text-[10px] uppercase tracking-[.13em] text-faint"><tr><th className="sticky left-0 z-10 min-w-52 border-b border-line bg-bg-elev/70 px-4 py-3">Theme</th><th className="border-b border-line px-3 py-3">Frequency</th><th className="border-b border-line px-3 py-3">Severity</th><th className="border-b border-line px-3 py-3">Confidence</th>{report.competitors.map((competitor) => <th key={competitor.url} className="min-w-28 border-b border-line px-3 py-3">{competitor.name}</th>)}</tr></thead><tbody>{report.themes.map((theme) => <tr key={theme.id} className="align-top border-b border-line last:border-b-0"><td className="sticky left-0 z-10 bg-bg px-4 py-4"><p className="font-medium">{theme.theme}</p><p className="mt-1 max-w-56 text-xs leading-5 text-muted">{theme.explanation}</p><SourceLink report={report} id={theme.representativeSourceId} /></td><td className="px-3 py-4"><span className="font-label text-sm text-fg">{theme.evidenceCount}</span><p className="mt-1 text-[11px] text-faint">sample items</p></td><td className="px-3 py-4"><SeverityMark value={theme.severity} /></td><td className="px-3 py-4"><ConfidenceMark value={themeConfidence(theme)} /></td>{report.competitors.map((competitor) => { const observed = theme.competitorsAffected.some((name) => namesMatch(name, competitor.name)); return <td key={competitor.url} className="px-3 py-4">{observed ? <span className="inline-flex rounded border border-acid/35 bg-acid-dim/45 px-2 py-1 font-label text-[10px] uppercase tracking-[.1em] text-acid">Observed</span> : <span className="text-xs text-faint">— No evidence</span>}</td>; })}</tr>)}</tbody></table></div></section>}
+      {activeTab === "decisions" && <section><SectionHead kicker="04" title="Pain → proof → fix" acid /><p className="mt-3 max-w-[64ch] text-sm leading-6 text-muted">Pick one wedge. Each flow ties customer pain to collected evidence, specific fix, and smallest test.</p><div className="mt-7 grid gap-3 lg:grid-cols-[minmax(15rem,.65fr)_minmax(0,1.35fr)]"><div className="space-y-2">{report.opportunities.map((item, index) => <button key={item.id} type="button" onClick={() => selectOpportunity(item.id)} className={`w-full border p-4 text-left transition-colors ${item.id === selectedOpportunity?.id ? "border-acid bg-acid-dim/45" : "border-line hover:border-acid/60"}`}><div className="flex items-center justify-between gap-3"><span className="font-label text-[11px] tracking-[.14em] text-acid">{String(index + 1).padStart(2, "0")}</span><ConfidenceMark value={item.confidence} /></div><p className="mt-3 text-sm leading-6">{item.customerPain}</p></button>)}</div>{selectedOpportunity && <DecisionFlow report={report} opportunity={selectedOpportunity} />}</div>{selectedOpportunity && <AgentPrompt prompt={prompt} onChange={setPrompt} onCopy={() => void copyPrompt()} onDownload={downloadPrompt} copied={copyState === "copied"} onReset={() => setPrompt(defaultPrompt)} />}</section>}
+      {activeTab === "blueprint" && <section className="rounded-2xl border border-acid/25 bg-acid-dim/25 p-5 md:p-8"><SectionHead kicker="05" title="Build brief" acid /><p className="mt-3 max-w-[60ch] text-sm leading-6 text-muted">Default view keeps only decisions needed for first test.</p><div className="mt-8 grid gap-px border border-acid/20 bg-acid/15 md:grid-cols-2"><BriefBlock label="Target customer" body={selectedOpportunity?.targetSegment ?? report.blueprint.underservedNiche} /><BriefBlock label="Core workflow" body={report.blueprint.smallestViableMvp} /><div className="bg-bg/65 p-5 md:p-6"><p className="font-label text-[10px] uppercase tracking-[.16em] text-acid">Three features</p><ol className="mt-3 space-y-3">{report.blueprint.featuresToBuildFirst.slice(0, 3).map((item, index) => <li key={item} className="flex gap-3 text-sm leading-6"><span className="font-label text-acid">0{index + 1}</span><span>{item}</span></li>)}</ol></div><div className="bg-bg/65 p-5 md:p-6"><p className="font-label text-[10px] uppercase tracking-[.16em] text-rage">Exclusions</p><ul className="mt-3 space-y-3">{report.blueprint.featuresToAvoid.slice(0, 3).map((item) => <li key={item} className="text-sm leading-6 text-muted">{item}</li>)}</ul></div><BriefBlock label="Riskiest assumption" body={report.blueprint.criticalAssumptions[0] ?? "Validate demand before build."} tone="rage" /><BriefBlock label="First experiment" body={firstExperiment(report)} /></div>{selectedOpportunity && <AgentPrompt prompt={prompt} onChange={setPrompt} onCopy={() => void copyPrompt()} onDownload={downloadPrompt} copied={copyState === "copied"} onReset={() => setPrompt(defaultPrompt)} compact />}</section>}
+      {activeTab === "sources" && <Sources report={report} />}
+      <div className="mt-12 flex items-center justify-between gap-4 border-t border-line pt-6">{activeIndex > 0 ? <NavButton direction="previous" label={TABS[activeIndex - 1].label} onClick={() => changeTab(TABS[activeIndex - 1].id)} /> : <span />}{activeIndex < TABS.length - 1 ? <NavButton direction="next" label={TABS[activeIndex + 1].label} onClick={() => changeTab(TABS[activeIndex + 1].id)} /> : <span />}</div>
+    </div></div></div></div>;
 }
 
-function SectionHead({
-  kicker,
-  title,
-  rage,
-  acid,
-}: {
-  kicker: string;
-  title: string;
-  rage?: boolean;
-  acid?: boolean;
-}) {
-  return (
-    <div>
-      <p
-        className={`font-label text-[12px] uppercase tracking-[0.2em] ${
-          rage ? "text-rage" : acid ? "text-acid" : "text-faint"
-        }`}
-      >
-        {kicker}
-      </p>
-      <h2 className="mt-2 text-[clamp(1.4rem,2.6vw,2.1rem)] font-medium tracking-[-0.03em]">{title}</h2>
-    </div>
-  );
-}
-
-function BlueprintBlock({ label, body }: { label: string; body: string }) {
-  return (
-    <div>
-      <p className="font-label text-[11px] uppercase tracking-[0.16em] text-faint">{label}</p>
-      <p className="mt-2 leading-7">{body}</p>
-    </div>
-  );
-}
-
-function hostOf(url: string) {
-  try {
-    return new URL(url).hostname.replace(/^www\./, "");
-  } catch {
-    return "";
-  }
-}
-
-function matchCompetitor(competitors: Report["competitors"], name: string) {
-  const key = name.trim().toLowerCase();
-  return (
-    competitors.find((item) => item.name.trim().toLowerCase() === key) ||
-    competitors.find((item) => {
-      const current = item.name.trim().toLowerCase();
-      return current.includes(key) || key.includes(current);
-    })
-  );
-}
-
-function CompetitorChip({ name, url }: { name: string; url: string }) {
-  const host = hostOf(url);
-  if (!url.startsWith("http")) {
-    return (
-      <span className="inline-flex rounded-full border border-line px-3 py-1.5 text-[12px] text-muted">
-        {name}
-      </span>
-    );
-  }
-  return (
-    <a
-      href={url}
-      target="_blank"
-      rel="noreferrer"
-      className="inline-flex items-center gap-2 rounded-full border border-line px-3 py-1.5 text-[12px] text-fg hover:border-acid hover:text-acid"
-    >
-      <span>{name}</span>
-      {host ? <span className="text-faint">{host}</span> : null}
-      <ArrowUpRight className="h-3 w-3" />
-    </a>
-  );
-}
-
-function CompetitorName({
-  name,
-  url,
-  className = "hover:text-acid",
-}: {
-  name: string;
-  url?: string;
-  className?: string;
-}) {
-  if (!url?.startsWith("http")) return <span>{name}</span>;
-  return (
-    <a href={url} target="_blank" rel="noreferrer" className={`inline-flex items-center gap-1 ${className}`}>
-      {name}
-      <ArrowUpRight className="h-3 w-3" />
-    </a>
-  );
-}
-
-function SourceLink({ report, id }: { report: Report; id: string }) {
-  const source = sourceById(report.sources, id);
-  if (!source) return null;
-  return (
-    <a
-      href={source.url}
-      target="_blank"
-      rel="noreferrer"
-      className="mt-2 inline-flex items-center gap-1 font-label text-[11px] uppercase tracking-[0.14em] text-acid hover:underline"
-    >
-      {source.domain} <ArrowUpRight className="h-3 w-3" />
-    </a>
-  );
-}
+function CompetitorTable({ report, title, competitors, relevance }: { report: Report; title: string; competitors: Report["competitors"]; relevance: "direct" | "adjacent" }) { if (!competitors.length) return null; return <div className="mt-8"><div className="mb-3 flex items-center justify-between"><p className="font-label text-[11px] uppercase tracking-[.16em] text-faint">{title}</p><Stamp tone={relevance === "direct" ? "acid" : "default"}>{competitors.length}</Stamp></div><div className="overflow-x-auto rounded-xl border border-line"><table className="w-full min-w-[760px] text-left"><thead className="bg-bg-elev/60 font-label text-[10px] uppercase tracking-[.13em] text-faint"><tr><th className="px-4 py-3">Product</th><th className="px-3 py-3">Relevance</th><th className="px-3 py-3">Audience / job</th><th className="px-3 py-3">Failure mode</th><th className="px-3 py-3">Evidence</th></tr></thead><tbody>{competitors.map((competitor) => <tr key={competitor.url} className="border-t border-line align-top"><td className="px-4 py-4"><CompetitorName name={competitor.name} url={competitor.url} className="font-medium hover:text-acid" /><p className="mt-1 max-w-52 text-xs leading-5 text-muted">{competitor.description}</p></td><td className="px-3 py-4"><Stamp tone={relevance === "direct" ? "acid" : "default"}>{relevance}</Stamp>{relevance === "adjacent" && <p className="mt-2 max-w-36 text-[11px] leading-4 text-faint">Nearby behavior, different core job.</p>}</td><td className="px-3 py-4"><p className="max-w-52 text-sm leading-6">{competitor.targetAudience}</p><p className="mt-2 text-xs leading-5 text-muted">{competitor.pricing ?? "Pricing not captured"}</p></td><td className="px-3 py-4"><p className="max-w-56 text-sm leading-6 text-rage">{competitor.mostCommonComplaint}</p><ConfidenceMark value={competitor.confidence} /></td><td className="px-3 py-4"><p className="font-label text-sm text-fg">{competitor.feedbackCount} items</p><div className="mt-2 flex flex-wrap gap-2">{competitor.sourceIds.map((id) => <SourceLink key={id} report={report} id={id} />)}</div></td></tr>)}</tbody></table></div></div>; }
+function DecisionFlow({ report, opportunity }: { report: Report; opportunity: Report["opportunities"][number] }) { const build = closestBuild(report, opportunity); return <article className="border border-line bg-bg-elev/25 p-5 md:p-6"><div className="grid gap-px bg-line md:grid-cols-2"><FlowBlock label="Pain" body={opportunity.customerPain} /><FlowBlock label="Proof" body={`${opportunity.evidenceSourceIds.length} linked sources in this collected sample.`} links={opportunity.evidenceSourceIds.map((id) => <SourceLink key={id} report={report} id={id} />)} /><FlowBlock label="Proposed fix" body={opportunity.recommendedSolution} acid /><FlowBlock label="Smallest experiment" body={experimentFor(report, opportunity)} /></div>{build && <div className="mt-5 border-t border-line pt-5"><p className="font-label text-[10px] uppercase tracking-[.16em] text-rage">Do not build</p><p className="mt-2 text-sm leading-6 text-muted">{build.notThat}</p><p className="mt-2 text-xs leading-5 text-faint">{build.because}</p></div>}</article>; }
+function AgentPrompt({ prompt, onChange, onCopy, onDownload, onReset, copied, compact = false }: { prompt: string; onChange: (value: string) => void; onCopy: () => void; onDownload: () => void; onReset: () => void; copied: boolean; compact?: boolean }) { return <div className={`border-t border-acid/20 ${compact ? "mt-7 pt-6" : "mt-8 pt-8"}`}><div className="flex flex-wrap items-end justify-between gap-3"><div><p className="font-label text-[10px] uppercase tracking-[.16em] text-acid">Custom agent prompt</p><p className="mt-1 text-sm text-muted">Selected pain, evidence, and first test. Edit before handoff.</p></div><button type="button" onClick={onReset} className="font-label text-[10px] uppercase tracking-[.14em] text-faint hover:text-fg">reset research draft</button></div><textarea value={prompt} onChange={(event) => onChange(event.target.value)} aria-label="Editable custom agent prompt" className="mt-4 min-h-60 w-full resize-y rounded-xl border border-line bg-bg px-4 py-3 font-mono text-xs leading-6 text-fg outline-none transition-colors focus:border-acid" /><div className="mt-3 flex flex-wrap gap-2"><button type="button" onClick={onCopy} className="inline-flex items-center gap-2 rounded-full bg-acid px-4 py-2 font-label text-[10px] uppercase tracking-[.14em] text-bg">{copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}{copied ? "copied" : "copy prompt"}</button><button type="button" onClick={onDownload} className="inline-flex items-center gap-2 rounded-full border border-line px-4 py-2 font-label text-[10px] uppercase tracking-[.14em] text-fg hover:border-acid hover:text-acid"><Download className="h-3.5 w-3.5" />download .md</button></div></div>; }
+function Sources({ report }: { report: Report }) { return <section><SectionHead kicker="06" title="Sources" /><details className="group mt-8 rounded-2xl border border-line"><summary className="flex cursor-pointer list-none items-center justify-between px-4 py-4"><span className="font-semibold tracking-[-.03em]">All sources</span><ChevronDown className="h-4 w-4 text-muted transition-transform group-open:rotate-180" /></summary><ul className="divide-y divide-line border-t border-line">{report.sources.map((source) => <li key={source.id} className="px-4 py-4"><a href={source.url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 font-medium hover:text-acid">{source.title} <ArrowUpRight className="h-3.5 w-3.5" /></a><p className="mt-1 font-label text-[12px] uppercase tracking-[.14em] text-faint">{source.domain}{formatDate(source.publishedAt) ? ` · ${formatDate(source.publishedAt)}` : ""}</p><p className="mt-2 text-sm text-muted">{source.findings}</p></li>)}</ul></details><ul className="mt-6 space-y-2">{report.caveats.map((item) => <li key={item} className="text-sm text-faint">{item}</li>)}</ul>{report.warnings.length > 0 && <ul className="mt-4 space-y-2">{report.warnings.map((item) => <li key={item} className="text-sm text-rage/80">{item}</li>)}</ul>}</section>; }
+function SectionHead({ kicker, title, rage, acid }: { kicker: string; title: string; rage?: boolean; acid?: boolean }) { return <div><p className={`font-label text-[11px] uppercase tracking-[.2em] ${rage ? "text-rage" : acid ? "text-acid" : "text-faint"}`}>{kicker}</p><h2 className="mt-2 text-[clamp(1.5rem,3vw,2.25rem)] font-medium tracking-[-.04em]">{title}</h2></div>; }
+function FilterSelect({ label, value, onChange, options }: { label: string; value: string; onChange: (value: string) => void; options: string[] }) { return <label className="block"><span className="mb-1 block font-label text-[10px] uppercase tracking-[.13em] text-faint">{label}</span><select value={value} onChange={(event) => onChange(event.target.value)} className="w-full rounded-lg border border-line bg-bg px-3 py-2 text-sm text-fg outline-none focus:border-acid">{options.map((option) => <option key={option} value={option}>{option === "all" ? `All ${label.toLowerCase()}s` : option === "mention" ? "Negative mention" : option === "rated" ? "Published rating" : option}</option>)}</select></label>; }
+function FlowBlock({ label, body, links, acid = false }: { label: string; body: string; links?: ReactNode; acid?: boolean }) { return <div className="bg-bg/70 p-4"><p className={`font-label text-[10px] uppercase tracking-[.16em] ${acid ? "text-acid" : "text-faint"}`}>{label}</p><p className="mt-2 text-sm leading-6">{body}</p>{links && <div className="mt-3 flex flex-wrap gap-2">{links}</div>}</div>; }
+function BriefBlock({ label, body, tone = "acid" }: { label: string; body: string; tone?: "acid" | "rage" }) { return <div className="bg-bg/65 p-5 md:p-6"><p className={`font-label text-[10px] uppercase tracking-[.16em] ${tone === "rage" ? "text-rage" : "text-acid"}`}>{label}</p><p className="mt-3 text-sm leading-6">{body}</p></div>; }
+function SeverityMark({ value }: { value: Report["themes"][number]["severity"] }) { return <Stamp tone={value === "critical" || value === "high" ? "rage" : value === "medium" ? "acid" : "default"}>{value}</Stamp>; }
+function EmptyState({ children }: { children: ReactNode }) { return <p className="mt-6 rounded-xl border border-dashed border-line p-5 text-sm text-muted">{children}</p>; }
+function SourceLink({ report, id }: { report: Report; id: string }) { const source = sourceById(report.sources, id); if (!source) return null; return <a href={source.url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 font-label text-[10px] uppercase tracking-[.11em] text-acid hover:underline">{source.domain} <ExternalLink className="h-3 w-3" /></a>; }
+function CompetitorName({ name, url, className = "hover:text-acid" }: { name: string; url?: string; className?: string }) { return !url?.startsWith("http") ? <span>{name}</span> : <a href={url} target="_blank" rel="noreferrer" className={`inline-flex items-center gap-1 ${className}`}>{name}<ArrowUpRight className="h-3 w-3" /></a>; }
+function NavButton({ direction, label, onClick }: { direction: "previous" | "next"; label: string; onClick: () => void }) { const Icon = direction === "previous" ? ChevronLeft : ChevronRight; return <button type="button" onClick={onClick} className={`group inline-flex items-center gap-2 text-muted hover:text-fg ${direction === "next" ? "text-right" : "text-left"}`}>{direction === "previous" && <Icon className="h-4 w-4 text-faint group-hover:text-acid" />}<span><span className="block font-label text-[10px] uppercase tracking-[.16em] text-faint">{direction}</span><span className="text-sm font-medium">{label}</span></span>{direction === "next" && <Icon className="h-4 w-4 text-faint group-hover:text-acid" />}</button>; }
+function matchCompetitor(competitors: Report["competitors"], name: string) { return competitors.find((item) => namesMatch(item.name, name)); }
+function relevanceOf(competitor: Report["competitors"][number]) { return /partner|match|matching|same-gym|gym-operated/i.test(`${competitor.description} ${competitor.mostCommonComplaint}`) ? "direct" : "adjacent"; }
+function themeConfidence(theme: Report["themes"][number]): Confidence { return theme.evidenceCount >= 4 ? "high" : theme.evidenceCount >= 2 ? "medium" : "low"; }
+function closestBuild(report: Report, opportunity: Report["opportunities"][number]) { return [...report.buildThisNotThat].sort((left, right) => overlap(right.sourceIds, opportunity.evidenceSourceIds) - overlap(left.sourceIds, opportunity.evidenceSourceIds))[0]; }
+function experimentFor(report: Report, opportunity: Report["opportunities"][number]) { const build = closestBuild(report, opportunity); const day = report.blueprint.validationPlan.find((item) => /interview|prototype|partner board|manager/i.test(item.action)); return build ? `${build.build}. Start: ${day?.action ?? firstExperiment(report)}` : firstExperiment(report); }
+function firstExperiment(report: Report) { const first = report.blueprint.validationPlan[0]; return first ? `${first.action} Pass if: ${first.successSignal}` : "Run five customer interviews before building."; }
+function overlap(left: string[], right: string[]) { return left.filter((item) => right.includes(item)).length; }
+function unique(values: string[]) { return [...new Set(values)]; }
+function agentPrompt(report: Report, opportunity: Report["opportunities"][number]) { const sources = opportunity.evidenceSourceIds.map((id) => sourceById(report.sources, id)).filter(Boolean).map((source) => `- ${source?.title} (${source?.url}): ${source?.findings}`).join("\n"); const rage = report.wallOfRage.filter((item) => opportunity.evidenceSourceIds.includes(item.sourceId)).slice(0, 3).map((item) => `- “${item.excerpt}” — ${item.competitor}, ${item.platform}`).join("\n"); return `You are product strategist. Turn this research into a smallest credible experiment.\n\nIdea\n${report.idea}\n\nSelected customer pain\n${opportunity.customerPain}\n\nTarget segment\n${opportunity.targetSegment}\n\nCompetitor weakness\n${opportunity.competitorWeakness}\n\nProposed fix\n${opportunity.recommendedSolution}\n\nEvidence excerpts\n${rage || "No excerpts linked."}\n\nSources\n${sources || "No linked sources."}\n\nConstraints\n- Keep scope to one falsifiable experiment.\n- State what not to build.\n- Separate evidence from assumptions.\n- Name success metric, failure signal, and next decision.\n\nReturn: experiment brief, recruit script, prototype scope, and decision rule.`; }
