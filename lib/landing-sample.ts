@@ -1,9 +1,6 @@
 // Lightweight, hand-authored content for the marketing landing page only.
 // Live searches use the full Report pipeline; this just powers the static preview.
 
-export const LANDING_IDEA =
-  "An app that helps people stick to a monthly budget without logging every expense.";
-
 export type SampleQuote = { quote: string; source: string; date: string };
 export type SamplePoint = { title: string; body: string };
 
