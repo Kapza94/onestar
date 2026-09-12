@@ -43,7 +43,7 @@ export function Landing({
             <a href="#pricing" className="hover:text-fg">pricing</a>
           </nav>
           <div className="flex items-center gap-3">
-            <a href="#search" className="hidden text-[13px] text-muted hover:text-fg sm:inline">sign in</a>
+            <span className="hidden text-[13px] text-faint sm:inline">sign in — coming soon</span>
             <a
               href="#search"
               className="rounded-md border border-acid px-4 py-2 text-[13px] font-medium text-acid transition-colors hover:bg-acid hover:text-bg"

@@ -213,12 +213,12 @@ async function enrichWithFirecrawl(
   }
 
   const thin = pages
-    .filter((page) => page.text.length < 500 && !isBrittleHost(page.url) && sourceQuality(page.url) > 0)
-    .slice(0, 8);
+    .filter((page) => page.text.length < 1200 && !isBrittleHost(page.url) && sourceQuality(page.url) > 0)
+    .slice(0, 12);
 
   if (thin.length === 0) return { pages, warnings };
 
-  const scraped = await mapLimit(thin, 2, (page) => firecrawlScrape(apiKey, page.url));
+  const scraped = await mapLimit(thin, 4, (page) => firecrawlScrape(apiKey, page.url));
   const next = pages.map((page) => {
     const matchIndex = thin.findIndex((item) => item.url === page.url);
     if (matchIndex === -1) return page;
@@ -230,7 +230,7 @@ async function enrichWithFirecrawl(
     return {
       ...page,
       title: doc.title || page.title,
-      text: clip(doc.markdown, 2800),
+      text: clip(doc.markdown, 4200),
       publishedAt: page.publishedAt || doc.publishedAt,
       via: "firecrawl" as const,
     };
