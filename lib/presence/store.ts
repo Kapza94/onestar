@@ -1,3 +1,4 @@
+import { uniqueRecentIdeas } from "@/lib/recent";
 import { COUNTRY_META, countryName } from "./countries";
 
 type Ping = {
@@ -86,16 +87,12 @@ export function recordPing(ping: Omit<Ping, "id">) {
   data.lastByIp.set(ping.ipHash, now);
   data.pings.push({ ...ping, id: `${ping.ipHash}-${now}` });
   if (ping.action === "search" && ping.idea) {
-    const key = ping.idea.toLowerCase();
-    data.searches = [{ idea: ping.idea, at: now }, ...data.searches.filter((item) => item.idea.toLowerCase() !== key)].slice(
-      0,
-      400,
-    );
+    data.searches = uniqueRecentIdeas([{ idea: ping.idea, at: now }, ...data.searches]).slice(0, 400);
   }
 }
 
 export function listSearches(page = 1, pageSize = 20) {
-  const items = uniqueIdeas(store().searches);
+  const items = uniqueRecentIdeas(store().searches);
   const safeSize = Math.min(50, Math.max(1, pageSize));
   const total = items.length;
   const pages = Math.max(1, Math.ceil(total / safeSize));
@@ -121,7 +118,8 @@ function relativeTime(at: number, now: number) {
 
 function actionCopy(ping: Ping) {
   if (ping.action === "search" && ping.idea) {
-    return `searched “${ping.idea}”`;
+    const label = ping.idea.length > 80 ? `${ping.idea.slice(0, 77).trimEnd()}…` : ping.idea;
+    return `searched “${label}”`;
   }
   if (ping.action === "search") return "searched an idea";
   return "is reading";
@@ -182,7 +180,7 @@ export function getPresenceSnapshot(): PresenceSnapshot {
       action: actionCopy(ping),
     }));
 
-  const recentIdeas = uniqueIdeas(data.searches).slice(0, 15);
+  const recentIdeas = uniqueRecentIdeas(data.searches).slice(0, 15);
 
   return {
     live,
@@ -196,14 +194,3 @@ export function getPresenceSnapshot(): PresenceSnapshot {
   };
 }
 
-function uniqueIdeas(items: { idea: string; at: number }[]) {
-  const seen = new Set<string>();
-  const out: { idea: string; at: number }[] = [];
-  for (const item of items) {
-    const key = item.idea.toLowerCase();
-    if (seen.has(key)) continue;
-    seen.add(key);
-    out.push(item);
-  }
-  return out;
-}

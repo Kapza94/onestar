@@ -11,14 +11,19 @@ import {
   loadSession,
   parseUrlField,
   pushRecentIdea,
+  findSavedReport,
+  saveIdeaReport,
   saveSession,
   type RecentIdea,
 } from "@/lib/client";
 import { EXAMPLE_COMPETITOR_URLS, EXAMPLE_IDEA, labeledExampleReport } from "@/lib/example-report";
 import { SEEDED_PREVIEW } from "@/lib/flags";
+import { sameIdea, uniqueRecentIdeas } from "@/lib/recent";
+import type { StarterSearch } from "@/lib/starters";
 import type { PresenceSnapshot } from "@/lib/presence/store";
 import type { AnalyzeError, AppStatus, Report } from "@/lib/schemas";
 import { ErrorScreen } from "./error-screen";
+import { HowItWorks } from "./how-it-works";
 import { LivePresence } from "./live-presence";
 import { RecentProjects } from "./recent-projects";
 import { ReportView } from "./report-view";
@@ -64,6 +69,7 @@ export function OneStarApp() {
   const [archiveTotal, setArchiveTotal] = useState(0);
   const [presence, setPresence] = useState<PresenceSnapshot | null>(null);
   const requestSeq = useRef(0);
+  const running = useRef(false);
 
   const idea = draft?.idea ?? queryIdea;
   const urls = (draft?.urls ?? "").replace(/\n+/g, ", ");
@@ -74,11 +80,34 @@ export function OneStarApp() {
 
   useEffect(() => {
     void fetchStatus().then(setStatus);
-    setRecent(loadRecentIdeas());
+    const session = loadSession();
+    let recents = loadRecentIdeas();
+    if (session?.report?.mode === "live") {
+      recents = pushRecentIdea(session.idea);
+    }
+    setRecent(recents);
+
+    if (queryIdea) {
+      const saved = findSavedReport(queryIdea);
+      commit({
+        idea: queryIdea,
+        urls: saved?.urls ?? "",
+        report: saved?.report ?? (session?.report && sameIdea(session.report.idea, queryIdea) ? session.report : null),
+        view: "home",
+      });
+    } else if (session?.report?.mode === "live") {
+      commit({
+        idea: session.idea,
+        urls: session.competitorUrls,
+        report: session.report,
+        view: "home",
+      });
+    }
+
     void fetchSearches(1, HOME_RECENT).then((result) => {
       setArchiveTotal(result.total);
       if (result.items.length) {
-        setRecent((current) => mergeRecent(current, result.items));
+        setRecent((current) => uniqueRecentIdeas([...current, ...result.items]));
       }
     });
 
@@ -113,7 +142,7 @@ export function OneStarApp() {
     return () => window.clearInterval(timer);
   }, []);
 
-  const homeRecent = useMemo(() => mergeRecent(recent, presence?.recentIdeas ?? []).slice(0, HOME_RECENT), [recent, presence]);
+  const homeRecent = useMemo(() => uniqueRecentIdeas([...recent, ...(presence?.recentIdeas ?? [])]).slice(0, HOME_RECENT), [recent, presence]);
 
   function commit(next: Partial<Draft>) {
     setDraft((prev) => {
@@ -132,10 +161,16 @@ export function OneStarApp() {
         error: next.error === undefined ? base.error : next.error,
       };
       const session = loadSession();
+      const reportForIdea =
+        merged.report && sameIdea(merged.report.idea, merged.idea)
+          ? merged.report
+          : session?.report && sameIdea(session.report.idea, merged.idea)
+            ? session.report
+            : null;
       saveSession({
         idea: merged.idea,
         competitorUrls: merged.urls,
-        report: merged.report ?? session?.report ?? null,
+        report: reportForIdea,
       });
       return merged;
     });
@@ -143,7 +178,14 @@ export function OneStarApp() {
 
   useEffect(() => {
     if (!queryIdea) return;
-    commit({ idea: queryIdea, view: "home" });
+    const saved = findSavedReport(queryIdea);
+    const session = loadSession();
+    commit({
+      idea: queryIdea,
+      urls: saved?.urls ?? "",
+      report: saved?.report ?? (session?.report && sameIdea(session.report.idea, queryIdea) ? session.report : null),
+      view: "home",
+    });
   }, [queryIdea]);
 
   function showExample() {
@@ -180,6 +222,8 @@ export function OneStarApp() {
   async function run(nextIdea = idea, nextUrls = urls) {
     const trimmed = nextIdea.trim();
     if (trimmed.length < 12) return;
+    if (running.current) return;
+    running.current = true;
     const seq = ++requestSeq.current;
     setRecent(pushRecentIdea(trimmed));
     void pingPresence({ action: "search", idea: trimmed }).then((snapshot) => {
@@ -200,53 +244,71 @@ export function OneStarApp() {
       error: null,
     });
 
-    const json = await analyzeIdea(trimmed, parseUrlField(nextUrls));
-    if (seq !== requestSeq.current) {
-      if (json.ok) {
+    try {
+      const json = await analyzeIdea(trimmed, parseUrlField(nextUrls));
+      if (seq !== requestSeq.current) {
+        if (json.ok) {
+          saveIdeaReport(trimmed, nextUrls, json.report);
+          commit({
+            idea: trimmed,
+            urls: nextUrls,
+            report: json.report,
+            error: null,
+          });
+        }
+        return;
+      }
+      if (!json.ok) {
         commit({
           idea: trimmed,
           urls: nextUrls,
-          report: json.report,
-          error: null,
+          view: "error",
+          error: json.error,
         });
+        return;
       }
-      return;
-    }
-    if (!json.ok) {
+      saveIdeaReport(trimmed, nextUrls, json.report);
       commit({
         idea: trimmed,
         urls: nextUrls,
-        view: "error",
-        error: json.error,
+        report: json.report,
+        view: "home",
+        error: null,
       });
-      return;
+      requestAnimationFrame(() => document.getElementById("snapshot")?.scrollIntoView({ behavior: "smooth" }));
+    } finally {
+      running.current = false;
     }
-    commit({
-      idea: trimmed,
-      urls: nextUrls,
-      report: json.report,
-      view: "home",
-      error: null,
-    });
-    requestAnimationFrame(() => document.getElementById("snapshot")?.scrollIntoView({ behavior: "smooth" }));
   }
 
   function onPickRecent(item: RecentIdea) {
-    const storedReport = loadSession()?.report ?? report;
-    const sameReport =
-      Boolean(storedReport?.idea) &&
-      item.idea.trim().toLowerCase() === storedReport!.idea.trim().toLowerCase();
+    const saved = findSavedReport(item.idea);
+    const session = loadSession();
+    const storedReport =
+      saved?.report ??
+      (session?.report && sameIdea(session.report.idea, item.idea) ? session.report : null) ??
+      (report && sameIdea(report.idea, item.idea) ? report : null);
     commit({
-      idea: item.idea,
-      report: sameReport ? storedReport : null,
+      idea: saved?.idea ?? item.idea,
+      urls: saved?.urls ?? "",
+      report: storedReport,
       view: "home",
       error: null,
     });
-    if (sameReport) {
+    if (storedReport) {
       requestAnimationFrame(() => document.getElementById("snapshot")?.scrollIntoView({ behavior: "smooth" }));
     } else {
       requestAnimationFrame(() => document.getElementById("search")?.scrollIntoView({ behavior: "smooth" }));
     }
+  }
+
+  function onStarter(item: StarterSearch) {
+    if (item.kind === "sample") {
+      showExample();
+      return;
+    }
+    commit({ idea: item.idea, urls: "", report: null, view: "home", error: null });
+    requestAnimationFrame(() => document.getElementById("search")?.scrollIntoView({ behavior: "smooth" }));
   }
 
   return (
@@ -266,10 +328,12 @@ export function OneStarApp() {
         onSubmit={() => void run()}
         onExample={SEEDED_PREVIEW ? showExample : undefined}
       />
+      <HowItWorks />
       <RecentProjects
         items={homeRecent}
         total={Math.max(archiveTotal, recent.length, homeRecent.length)}
         onPick={onPickRecent}
+        onStarter={onStarter}
       />
       {view === "research" ? <ResearchScreen idea={idea} /> : null}
       {view === "error" && error ? (
@@ -284,16 +348,4 @@ export function OneStarApp() {
       <LivePresence snapshot={presence} />
     </div>
   );
-}
-
-function mergeRecent(primary: RecentIdea[], secondary: RecentIdea[]) {
-  const seen = new Set<string>();
-  const out: RecentIdea[] = [];
-  for (const item of [...primary, ...secondary]) {
-    const key = item.idea.toLowerCase();
-    if (seen.has(key)) continue;
-    seen.add(key);
-    out.push(item);
-  }
-  return out;
 }

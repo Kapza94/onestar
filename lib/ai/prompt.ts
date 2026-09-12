@@ -7,11 +7,14 @@ Hard rules:
 - Never attribute a complaint to a source that does not contain it.
 - If information is missing, write unknown / null. Do not guess.
 - Separate observation (what a source says) from inference (what a founder might do).
-- Return source IDs on every factual claim that depends on evidence.
+- Return source IDs only in sourceId, sourceIds, evidenceSourceIds, and representativeSourceId fields.
+- Never write [s1], [s3], or any bracketed source marker in prose. The UI already links sources.
 - Do not treat one complaint as a market-wide pattern.
 - Do not claim exact market demand, TAM, or statistical significance.
 - Frequency counts must refer only to the supplied sample.
 - Prefer 3 to 5 competitors that actually appear in the evidence. Drop anything you cannot support.
+- competitor.url must be the official product homepage (https), not a review, Reddit thread, or app-store listing.
+- feedbackCount must be the number of wallOfRage excerpts for that competitor in this sample, not a guessed review total. If there are no excerpts, omit the competitor.
 - Quotations must be short excerpts, not entire reviews.
 - If a numerical rating is not in the source, set rating to null. The UI will label those as Negative mention, not 1-star.
 - Advice must be specific to the submitted idea and the collected complaints. Ban generic lines like "build a better UX."

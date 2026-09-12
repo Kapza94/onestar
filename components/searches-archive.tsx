@@ -3,31 +3,20 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { fetchSearches, loadRecentIdeas, type RecentIdea } from "@/lib/client";
+import { uniqueRecentIdeas } from "@/lib/recent";
 import { TopNav } from "./top-nav";
 
 const PAGE_SIZE = 20;
-
-function mergeIdeas(groups: RecentIdea[][]) {
-  const seen = new Set<string>();
-  const out: RecentIdea[] = [];
-  for (const group of groups) {
-    for (const item of group) {
-      const key = item.idea.toLowerCase();
-      if (seen.has(key)) continue;
-      seen.add(key);
-      out.push(item);
-    }
-  }
-  return out.sort((a, b) => b.at - a.at);
-}
 
 export function SearchesArchive() {
   const [page, setPage] = useState(1);
   const [all, setAll] = useState<RecentIdea[]>([]);
 
   useEffect(() => {
+    const local = loadRecentIdeas();
+    setAll(local);
     void fetchSearches(1, 50).then((result) => {
-      setAll(mergeIdeas([loadRecentIdeas(), result.items]));
+      setAll(uniqueRecentIdeas([...loadRecentIdeas(), ...result.items]));
     });
   }, []);
 

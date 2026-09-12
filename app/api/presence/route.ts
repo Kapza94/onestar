@@ -25,7 +25,7 @@ export async function POST(request: Request) {
     const body = (await request.json()) as { action?: string; idea?: string };
     if (body.action === "search") action = "search";
     if (typeof body.idea === "string") {
-      idea = body.idea.trim().slice(0, 80) || null;
+      idea = body.idea.trim().slice(0, 2000) || null;
     }
   } catch {
     // empty body is a visit ping

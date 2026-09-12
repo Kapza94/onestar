@@ -2,6 +2,7 @@
 
 import { ArrowUpRight, ChevronDown } from "lucide-react";
 import { formatDate, sourceById } from "@/lib/client";
+import { sanitizeReportCopy, withEvidenceCounts } from "@/lib/copy";
 import type { Report } from "@/lib/schemas";
 import { ConfidenceMark, Stamp } from "./stamp";
 
@@ -16,7 +17,8 @@ const NAV = [
   ["sources", "sources"],
 ] as const;
 
-export function ReportView({ report }: { report: Report }) {
+export function ReportView({ report: raw }: { report: Report }) {
+  const report = withEvidenceCounts(sanitizeReportCopy(raw));
   const maxTheme = Math.max(...report.themes.map((theme) => theme.evidenceCount), 1);
 
   return (
@@ -61,6 +63,18 @@ export function ReportView({ report }: { report: Report }) {
           <p className="mt-4 font-label text-[12px] uppercase tracking-[0.14em] text-rage">
             {report.market.negativeFeedbackCount} negative items in this sample
           </p>
+          {report.competitors.length ? (
+            <div className="mt-10">
+              <p className="font-label text-[11px] uppercase tracking-[0.16em] text-faint">similar products</p>
+              <ul className="mt-4 flex flex-wrap gap-2">
+                {report.competitors.map((competitor) => (
+                  <li key={`${competitor.name}-${competitor.url}`}>
+                    <CompetitorChip name={competitor.name} url={competitor.url} />
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
         </section>
 
         <section id="competitors" className="mt-24">
@@ -70,9 +84,21 @@ export function ReportView({ report }: { report: Report }) {
               <article key={competitor.url} className="grid gap-6 py-8 md:grid-cols-[minmax(0,1.1fr)_minmax(0,0.9fr)]">
                 <div>
                   <div className="flex flex-wrap items-center gap-3">
-                    <h3 className="text-2xl font-semibold tracking-[-0.03em]">{competitor.name}</h3>
+                    <h3 className="text-2xl font-semibold tracking-[-0.03em]">
+                      <CompetitorName name={competitor.name} url={competitor.url} />
+                    </h3>
                     <ConfidenceMark value={competitor.confidence} />
                   </div>
+                  {hostOf(competitor.url) ? (
+                    <a
+                      href={competitor.url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="mt-2 inline-flex items-center gap-1 text-sm text-acid hover:underline"
+                    >
+                      {hostOf(competitor.url)} <ArrowUpRight className="h-3.5 w-3.5" />
+                    </a>
+                  ) : null}
                   <p className="mt-3 max-w-[50ch] text-muted">{competitor.description}</p>
                   <p className="mt-4 text-sm text-faint">
                     Audience: <span className="text-fg">{competitor.targetAudience}</span>
@@ -87,17 +113,11 @@ export function ReportView({ report }: { report: Report }) {
                     “{competitor.mostCommonComplaint}”
                   </p>
                   <p className="mt-3 font-label text-[12px] uppercase tracking-[0.14em] text-faint">
-                    {competitor.feedbackCount} feedback items
+                    {competitor.feedbackCount > 0
+                      ? `${competitor.feedbackCount} ${competitor.feedbackCount === 1 ? "complaint" : "complaints"} in this sample`
+                      : "no complaints in this sample"}
                   </p>
                   <div className="mt-4 flex flex-wrap gap-3 md:justify-end">
-                    <a
-                      href={competitor.url}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="inline-flex items-center gap-1 font-label text-[12px] uppercase tracking-[0.14em] text-acid hover:underline"
-                    >
-                      Site <ArrowUpRight className="h-3.5 w-3.5" />
-                    </a>
                     {competitor.sourceIds.map((id) => {
                       const source = sourceById(report.sources, id);
                       if (!source) return null;
@@ -147,7 +167,13 @@ export function ReportView({ report }: { report: Report }) {
                   )}
                 </div>
                 <p className="mt-3 font-label text-[11px] uppercase tracking-[0.14em] text-muted">
-                  {item.competitor} · {item.platform}
+                  <CompetitorName
+                    name={item.competitor}
+                    url={matchCompetitor(report.competitors, item.competitor)?.url}
+                    className="text-muted hover:text-acid"
+                  />
+                  {" · "}
+                  {item.platform}
                   {formatDate(item.publishedAt) ? ` · ${formatDate(item.publishedAt)}` : ""}
                 </p>
                 <SourceLink report={report} id={item.sourceId} />
@@ -167,8 +193,17 @@ export function ReportView({ report }: { report: Report }) {
                 <div className="flex flex-wrap items-end justify-between gap-3">
                   <div>
                     <p className="text-xl font-semibold tracking-[-0.03em]">{theme.theme}</p>
-                    <p className="mt-1 text-sm text-muted">
-                      {theme.competitorsAffected.join(" · ")}
+                    <p className="mt-1 flex flex-wrap gap-x-2 gap-y-1 text-sm text-muted">
+                      {theme.competitorsAffected.map((name, index) => (
+                        <span key={`${theme.id}-${name}`} className="inline-flex items-center gap-2">
+                          {index > 0 ? <span className="text-faint">·</span> : null}
+                          <CompetitorName
+                            name={name}
+                            url={matchCompetitor(report.competitors, name)?.url}
+                            className="text-muted hover:text-acid"
+                          />
+                        </span>
+                      ))}
                     </p>
                   </div>
                   <p className="font-label text-[12px] uppercase tracking-[0.14em] text-faint">
@@ -241,6 +276,17 @@ export function ReportView({ report }: { report: Report }) {
                   <p className="font-label text-[11px] uppercase tracking-[0.16em] text-rage">Not</p>
                   <p className="mt-2 text-2xl font-semibold tracking-[-0.03em] text-muted">{item.notThat}</p>
                   <p className="mt-4 text-lg leading-8 text-muted">because {item.because}</p>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    {report.competitors
+                      .filter((competitor) =>
+                        [item.build, item.notThat, item.because].some((text) =>
+                          text.toLowerCase().includes(competitor.name.toLowerCase()),
+                        ),
+                      )
+                      .map((competitor) => (
+                        <CompetitorChip key={competitor.url} name={competitor.name} url={competitor.url} />
+                      ))}
+                  </div>
                   <div className="mt-3 flex flex-wrap gap-3">
                     {item.sourceIds.map((id) => (
                       <SourceLink key={id} report={report} id={id} />
@@ -410,6 +456,66 @@ function BlueprintBlock({ label, body }: { label: string; body: string }) {
       <p className="font-label text-[11px] uppercase tracking-[0.16em] text-faint">{label}</p>
       <p className="mt-2 leading-7">{body}</p>
     </div>
+  );
+}
+
+function hostOf(url: string) {
+  try {
+    return new URL(url).hostname.replace(/^www\./, "");
+  } catch {
+    return "";
+  }
+}
+
+function matchCompetitor(competitors: Report["competitors"], name: string) {
+  const key = name.trim().toLowerCase();
+  return (
+    competitors.find((item) => item.name.trim().toLowerCase() === key) ||
+    competitors.find((item) => {
+      const current = item.name.trim().toLowerCase();
+      return current.includes(key) || key.includes(current);
+    })
+  );
+}
+
+function CompetitorChip({ name, url }: { name: string; url: string }) {
+  const host = hostOf(url);
+  if (!url.startsWith("http")) {
+    return (
+      <span className="inline-flex rounded-full border border-line px-3 py-1.5 text-[12px] text-muted">
+        {name}
+      </span>
+    );
+  }
+  return (
+    <a
+      href={url}
+      target="_blank"
+      rel="noreferrer"
+      className="inline-flex items-center gap-2 rounded-full border border-line px-3 py-1.5 text-[12px] text-fg hover:border-acid hover:text-acid"
+    >
+      <span>{name}</span>
+      {host ? <span className="text-faint">{host}</span> : null}
+      <ArrowUpRight className="h-3 w-3" />
+    </a>
+  );
+}
+
+function CompetitorName({
+  name,
+  url,
+  className = "hover:text-acid",
+}: {
+  name: string;
+  url?: string;
+  className?: string;
+}) {
+  if (!url?.startsWith("http")) return <span>{name}</span>;
+  return (
+    <a href={url} target="_blank" rel="noreferrer" className={`inline-flex items-center gap-1 ${className}`}>
+      {name}
+      <ArrowUpRight className="h-3 w-3" />
+    </a>
   );
 }
 
