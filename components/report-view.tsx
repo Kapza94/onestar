@@ -4,64 +4,45 @@ import { ArrowUpRight, ChevronDown } from "lucide-react";
 import { formatDate, sourceById } from "@/lib/client";
 import type { Report } from "@/lib/schemas";
 import { ConfidenceMark, Stamp } from "./stamp";
-import { Wordmark } from "./wordmark";
 
 const NAV = [
-  ["snapshot", "Snapshot"],
-  ["competitors", "Competitors"],
-  ["rage", "Wall of Rage"],
-  ["heatmap", "Heatmap"],
-  ["opportunities", "Opportunities"],
-  ["build", "Build this"],
-  ["blueprint", "Blueprint"],
-  ["sources", "Sources"],
+  ["snapshot", "snapshot"],
+  ["competitors", "competitors"],
+  ["rage", "wall of rage"],
+  ["heatmap", "heatmap"],
+  ["opportunities", "opportunities"],
+  ["build", "build this"],
+  ["blueprint", "blueprint"],
+  ["sources", "sources"],
 ] as const;
 
-export function ReportView({
-  report,
-  onReset,
-}: {
-  report: Report;
-  onReset: () => void;
-}) {
+export function ReportView({ report }: { report: Report }) {
   const maxTheme = Math.max(...report.themes.map((theme) => theme.evidenceCount), 1);
 
   return (
-    <div className="min-h-[100dvh]">
-      <header className="sticky top-0 z-30 border-b border-line/80 bg-bg/92">
-        <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-3 md:px-8">
-          <Wordmark className="text-base" />
-          <div className="flex flex-wrap items-center gap-2">
-            {report.mode === "demo" ? <Stamp tone="acid">Example data</Stamp> : <Stamp>Live research</Stamp>}
-            <button
-              type="button"
-              onClick={onReset}
-              className="font-label text-[12px] uppercase tracking-[0.14em] text-muted hover:text-fg"
-            >
-              New idea
-            </button>
-          </div>
-        </div>
-        <nav className="flex gap-4 overflow-x-auto px-5 pb-3 md:px-8">
-          {NAV.map(([id, label]) => (
-            <a
-              key={id}
-              href={`#${id}`}
-              className="shrink-0 font-label text-[11px] uppercase tracking-[0.16em] text-faint hover:text-fg"
-            >
-              {label}
-            </a>
-          ))}
-        </nav>
-      </header>
+    <div className="border-t border-line">
+      <nav className="mx-auto flex max-w-[1180px] flex-wrap gap-x-5 gap-y-2 px-4 py-4 md:px-6">
+        {NAV.map(([id, label]) => (
+          <a
+            key={id}
+            href={`#${id}`}
+            className="text-[12px] text-muted hover:text-acid"
+          >
+            {label}
+          </a>
+        ))}
+        <span className="ml-auto hidden sm:inline-flex">
+          {report.mode === "demo" ? <Stamp tone="acid">example data</Stamp> : <Stamp>live research</Stamp>}
+        </span>
+      </nav>
 
-      <div className="mx-auto max-w-[1180px] px-5 py-10 md:px-8 md:py-16 [&_section]:scroll-mt-28">
+      <div className="mx-auto max-w-[1180px] px-4 py-10 md:px-6 md:py-16 [&_section]:scroll-mt-6">
         <section id="snapshot">
-          <p className="font-label text-[12px] uppercase tracking-[0.2em] text-rage">Market snapshot</p>
+          <p className="text-[12px] uppercase tracking-[0.18em] text-acid">market snapshot</p>
           <h1 className="mt-4 max-w-[22ch] text-[clamp(2.1rem,5vw,4.2rem)] font-semibold leading-[0.95] tracking-[-0.05em]">
             {report.market.interpretedIdea}
           </h1>
-          <p className="mt-6 max-w-[62ch] font-serif text-xl leading-9 text-muted">
+          <p className="mt-6 max-w-[62ch] text-xl leading-9 text-muted">
             {report.market.opportunityVerdict}
           </p>
           <dl className="mt-10 grid grid-cols-2 gap-px bg-line md:grid-cols-4">
@@ -102,7 +83,7 @@ export function ReportView({
                   </p>
                 </div>
                 <div className="md:text-right">
-                  <p className="font-serif text-lg leading-8 text-rage">
+                  <p className="text-lg leading-8 text-rage">
                     “{competitor.mostCommonComplaint}”
                   </p>
                   <p className="mt-3 font-label text-[12px] uppercase tracking-[0.14em] text-faint">
@@ -152,11 +133,11 @@ export function ReportView({
             {report.wallOfRage.map((item, index) => (
               <article
                 key={item.id}
-                className={`mb-4 break-inside-avoid border border-rage/25 bg-rage-dim/40 p-4 ${
+                className={`mb-4 break-inside-avoid rounded-2xl border border-rage/25 bg-rage-dim/40 p-4 ${
                   index % 3 === 1 ? "md:translate-y-3" : index % 3 === 2 ? "md:-translate-y-2" : ""
                 }`}
               >
-                <p className="font-serif text-[1.05rem] leading-7 text-fg">“{item.excerpt}”</p>
+                <p className="text-[1.05rem] leading-7 text-fg">“{item.excerpt}”</p>
                 <div className="mt-4 flex flex-wrap items-center gap-2">
                   <Stamp tone="rage">{item.category}</Stamp>
                   {item.rating === null ? (
@@ -259,7 +240,7 @@ export function ReportView({
                 <div>
                   <p className="font-label text-[11px] uppercase tracking-[0.16em] text-rage">Not</p>
                   <p className="mt-2 text-2xl font-semibold tracking-[-0.03em] text-muted">{item.notThat}</p>
-                  <p className="mt-4 font-serif text-lg leading-8 text-muted">Because {item.because}</p>
+                  <p className="mt-4 text-lg leading-8 text-muted">because {item.because}</p>
                   <div className="mt-3 flex flex-wrap gap-3">
                     {item.sourceIds.map((id) => (
                       <SourceLink key={id} report={report} id={id} />
@@ -271,7 +252,7 @@ export function ReportView({
           </div>
         </section>
 
-        <section id="blueprint" className="relative mt-24 border border-acid/20 bg-acid-dim/30 p-5 md:p-10">
+        <section id="blueprint" className="relative mt-24 rounded-3xl border border-acid/20 bg-acid-dim/30 p-5 md:p-10">
           <SectionHead kicker="06" title="Better-product blueprint" acid />
           <div className="mt-10 grid gap-10 md:grid-cols-2">
             <BlueprintBlock label="Underserved niche" body={report.blueprint.underservedNiche} />
@@ -338,20 +319,20 @@ export function ReportView({
             <p className="mt-3 max-w-[50ch] text-2xl font-semibold tracking-[-0.03em]">
               {report.blueprint.rewrittenPitch}
             </p>
-            <p className="mt-8 font-label text-[11px] uppercase tracking-[0.16em] text-faint">
-              Landing headline
+            <p className="mt-8 text-[11px] uppercase tracking-[0.16em] text-faint">
+              landing headline
             </p>
-            <p className="mt-3 font-serif text-3xl leading-tight md:text-4xl">
+            <p className="mt-3 text-3xl leading-tight md:text-4xl">
               {report.blueprint.landingHeadline}
             </p>
-            <p className="mt-6 inline-flex bg-acid px-5 py-3 font-medium text-bg">
+            <p className="mt-6 inline-flex rounded-full bg-acid px-5 py-3 font-medium text-bg">
               {report.blueprint.primaryCta}
             </p>
           </div>
         </section>
 
         <section id="sources" className="mt-24 mb-16">
-          <details className="group border border-line">
+          <details className="group rounded-2xl border border-line">
             <summary className="flex cursor-pointer list-none items-center justify-between px-4 py-4">
               <span className="font-semibold tracking-[-0.03em]">Sources</span>
               <ChevronDown className="h-4 w-4 text-muted transition-transform group-open:rotate-180" />

@@ -101,13 +101,57 @@ async function completeGemini(system: string, user: string) {
   return content;
 }
 
+async function completeOpenAI(system: string, user: string) {
+  const env = getEnv();
+  const response = await fetch("https://api.openai.com/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${env.openaiApiKey}`,
+    },
+    body: JSON.stringify({
+      model: env.openaiModel,
+      messages: [
+        { role: "system", content: system },
+        { role: "user", content: user },
+      ],
+      response_format: { type: "json_object" },
+      reasoning_effort: env.openaiReasoning || "none",
+    }),
+    signal: AbortSignal.timeout(90_000),
+  });
+
+  if (!response.ok) {
+    const detail = await response.text().catch(() => "");
+    throw new AnalyzeFailure(
+      "unknown",
+      `OpenAI request failed (${response.status})${detail ? `: ${detail.slice(0, 200)}` : ""}`,
+      { retryable: response.status >= 500, status: 502 },
+    );
+  }
+
+  const json = (await response.json()) as {
+    choices?: { message?: { content?: string } }[];
+  };
+  const content = json.choices?.[0]?.message?.content;
+  if (!content) {
+    throw new AnalyzeFailure("invalid_ai_json", "OpenAI returned an empty response.", {
+      retryable: true,
+      status: 502,
+    });
+  }
+  return content;
+}
+
 export async function generateReportJson(system: string, user: string) {
   const env = getEnv();
   try {
     const raw =
       env.aiProvider === "xai"
         ? await completeXai(system, user)
-        : await completeGemini(system, user);
+        : env.aiProvider === "openai"
+          ? await completeOpenAI(system, user)
+          : await completeGemini(system, user);
     return extractJson(raw);
   } catch (error) {
     if (error instanceof AnalyzeFailure) throw error;

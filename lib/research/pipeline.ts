@@ -323,13 +323,13 @@ export async function runAnalysis(input: AnalyzeInput): Promise<Report> {
     );
   }
   if (!isAiConfigured()) {
-    throw new AnalyzeFailure(
-      "missing_keys",
+    const missing =
       env.aiProvider === "xai"
-        ? "XAI_API_KEY is missing. Set it, switch AI_PROVIDER=gemini, or enable DEMO_MODE."
-        : "GEMINI_API_KEY is missing. Set it, switch AI_PROVIDER=xai, or enable DEMO_MODE.",
-      { retryable: false, status: 501 },
-    );
+        ? "XAI_API_KEY is missing. Set it, switch AI_PROVIDER=openai, or enable DEMO_MODE."
+        : env.aiProvider === "openai"
+          ? "OPENAI_API_KEY is missing. Set it, or enable DEMO_MODE."
+          : "GEMINI_API_KEY is missing. Set it, switch AI_PROVIDER=openai, or enable DEMO_MODE.";
+    throw new AnalyzeFailure("missing_keys", missing, { retryable: false, status: 501 });
   }
 
   const warnings: string[] = [];

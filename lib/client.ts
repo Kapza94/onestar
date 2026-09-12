@@ -1,6 +1,11 @@
 import type { AnalyzeError, AppStatus, Report } from "./schemas";
 
 export const STORAGE_KEY = "onestar:last-session";
+export const RECENT_KEY = "onestar:recent-ideas";
+export const HOME_RECENT = 12;
+const MAX_RECENT = 80;
+
+export type RecentIdea = { idea: string; at: number };
 
 export type Session = {
   idea: string;
@@ -25,6 +30,47 @@ export function saveSession(session: Session) {
   } catch {
     // private mode
   }
+}
+
+export function loadRecentIdeas(): RecentIdea[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = localStorage.getItem(RECENT_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as RecentIdea[];
+    return Array.isArray(parsed) ? parsed.slice(0, MAX_RECENT) : [];
+  } catch {
+    return [];
+  }
+}
+
+export function pushRecentIdea(idea: string): RecentIdea[] {
+  const trimmed = idea.trim();
+  if (!trimmed) return loadRecentIdeas();
+  const next = [
+    { idea: trimmed, at: Date.now() },
+    ...loadRecentIdeas().filter((item) => item.idea.toLowerCase() !== trimmed.toLowerCase()),
+  ].slice(0, MAX_RECENT);
+  try {
+    localStorage.setItem(RECENT_KEY, JSON.stringify(next));
+  } catch {
+    // private mode
+  }
+  return next;
+}
+
+export async function fetchSearches(page = 1, limit = 20) {
+  const response = await fetch(`/api/searches?page=${page}&limit=${limit}`);
+  if (!response.ok) {
+    return { items: [] as RecentIdea[], page: 1, pageSize: limit, total: 0, pages: 1 };
+  }
+  return (await response.json()) as {
+    items: RecentIdea[];
+    page: number;
+    pageSize: number;
+    total: number;
+    pages: number;
+  };
 }
 
 export async function fetchStatus(): Promise<AppStatus | null> {

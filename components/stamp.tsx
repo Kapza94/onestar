@@ -1,8 +1,10 @@
+import type { ReactNode } from "react";
+
 export function Stamp({
   children,
   tone = "default",
 }: {
-  children: React.ReactNode;
+  children: ReactNode;
   tone?: "default" | "rage" | "acid";
 }) {
   const color =
@@ -14,7 +16,7 @@ export function Stamp({
 
   return (
     <span
-      className={`inline-flex items-center rounded-[2px] border px-2 py-[2px] font-label text-[11px] font-semibold uppercase tracking-[0.16em] ${color}`}
+      className={`inline-flex items-center rounded-full border px-2.5 py-[3px] text-[11px] tracking-[0.08em] ${color}`}
     >
       {children}
     </span>

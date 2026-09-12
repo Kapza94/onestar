@@ -165,7 +165,8 @@ export type AnalyzeResponse = z.infer<typeof analyzeResponseSchema>;
 
 export const statusSchema = z.object({
   demoMode: z.boolean(),
-  aiProvider: z.enum(["xai", "gemini"]),
+  aiProvider: z.enum(["xai", "gemini", "openai"]),
+  aiModel: z.string(),
   exaConfigured: z.boolean(),
   firecrawlConfigured: z.boolean(),
   aiConfigured: z.boolean(),
