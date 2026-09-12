@@ -19,7 +19,6 @@ import {
 import { EXAMPLE_COMPETITOR_URLS, EXAMPLE_IDEA, labeledExampleReport } from "@/lib/example-report";
 import { SEEDED_PREVIEW } from "@/lib/flags";
 import { sameIdea, uniqueRecentIdeas } from "@/lib/recent";
-import { LANDING_IDEA } from "@/lib/landing-sample";
 import type { PresenceSnapshot } from "@/lib/presence/store";
 import type { AnalyzeError, AppStatus, Report } from "@/lib/schemas";
 import { ErrorScreen } from "./error-screen";
@@ -101,7 +100,7 @@ export function OneStarApp() {
         view: "home",
       });
     } else {
-      commit({ idea: LANDING_IDEA });
+      commit({ idea: "" });
     }
 
     void fetchSearches(1, HOME_RECENT).then((result) => {
@@ -205,18 +204,6 @@ export function OneStarApp() {
     });
     requestAnimationFrame(() => document.getElementById("report")?.scrollIntoView({ behavior: "smooth" }));
   }
-
-  useEffect(() => {
-    if (!SEEDED_PREVIEW) return;
-    const example = labeledExampleReport(EXAMPLE_IDEA);
-    commit({
-      idea: EXAMPLE_IDEA,
-      urls: EXAMPLE_COMPETITOR_URLS.join(", "),
-      report: example,
-      view: "home",
-      error: null,
-    });
-  }, []);
 
   async function run(nextIdea = idea, nextUrls = urls) {
     const trimmed = nextIdea.trim();
