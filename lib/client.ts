@@ -14,6 +14,7 @@ export type Session = {
   idea: string;
   competitorUrls: string;
   report: Report | null;
+  reportId?: string | null;
 };
 
 export function loadSession(): Session | null {
@@ -75,6 +76,15 @@ type SavedReport = {
   at: number;
 };
 
+export type ReportSummary = {
+  id: string;
+  idea: string;
+  competitorUrls: string[];
+  status: string;
+  requestedAt: number;
+  completedAt: number | null;
+};
+
 function loadSavedReportList(): SavedReport[] {
   if (typeof window === "undefined") return [];
   try {
@@ -121,6 +131,26 @@ export async function fetchSearches(page = 1, limit = 20) {
   };
 }
 
+export async function fetchReports(page = 1, limit = 20) {
+  const response = await fetch(`/api/reports?page=${page}&limit=${limit}`);
+  if (!response.ok) {
+    return { items: [] as ReportSummary[], page: 1, pageSize: limit, total: 0, pages: 1 };
+  }
+  return (await response.json()) as {
+    items: ReportSummary[];
+    page: number;
+    pageSize: number;
+    total: number;
+    pages: number;
+  };
+}
+
+export async function fetchReport(reportId: string) {
+  const response = await fetch(`/api/reports/${encodeURIComponent(reportId)}`, { cache: "no-store" });
+  if (!response.ok) return null;
+  return (await response.json()) as ReportSummary & { report: Report | null };
+}
+
 export async function fetchStatus(): Promise<AppStatus | null> {
   try {
     const response = await fetch("/api/status");
@@ -131,14 +161,14 @@ export async function fetchStatus(): Promise<AppStatus | null> {
   }
 }
 
-export async function analyzeIdea(idea: string, competitorUrls: string[]) {
+export async function analyzeIdea(idea: string, competitorUrls: string[], idempotencyKey: string) {
   const response = await fetch("/api/analyze", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", "Idempotency-Key": idempotencyKey },
     body: JSON.stringify({ idea, competitorUrls }),
   });
   const json = (await response.json()) as
-    | { ok: true; report: Report }
+    | { ok: true; reportId: string; report: Report; balance: number }
     | AnalyzeError;
   return json;
 }

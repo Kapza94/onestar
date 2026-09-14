@@ -49,5 +49,4 @@ next-env.d.ts
 .dev.vars
 cloudflare-env.d.ts
 .wrangler
-.env.example
 demo-script.md

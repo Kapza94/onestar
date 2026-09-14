@@ -1,31 +1,27 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
-import { fetchSearches, loadRecentIdeas, type RecentIdea } from "@/lib/client";
-import { uniqueRecentIdeas } from "@/lib/recent";
+import { useEffect, useState } from "react";
+import { fetchSearches, type RecentIdea } from "@/lib/client";
 import { TopNav } from "./top-nav";
 
 const PAGE_SIZE = 20;
 
 export function SearchesArchive() {
   const [page, setPage] = useState(1);
-  const [all, setAll] = useState<RecentIdea[]>([]);
+  const [items, setItems] = useState<RecentIdea[]>([]);
+  const [total, setTotal] = useState(0);
+  const [pages, setPages] = useState(1);
 
   useEffect(() => {
-    const local = loadRecentIdeas();
-    setAll(local);
-    void fetchSearches(1, 50).then((result) => {
-      setAll(uniqueRecentIdeas([...loadRecentIdeas(), ...result.items]));
+    void fetchSearches(page, PAGE_SIZE).then((result) => {
+      setItems(result.items);
+      setTotal(result.total);
+      setPages(result.pages);
     });
-  }, []);
+  }, [page]);
 
-  const pages = Math.max(1, Math.ceil(all.length / PAGE_SIZE));
   const safePage = Math.min(page, pages);
-  const items = useMemo(
-    () => all.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE),
-    [all, safePage],
-  );
 
   return (
     <div className="min-h-[100dvh]">
@@ -34,7 +30,7 @@ export function SearchesArchive() {
         <p className="text-[11px] uppercase tracking-[0.16em] text-faint">archive</p>
         <h1 className="mt-2 text-[clamp(2rem,5vw,3.4rem)] font-medium tracking-[-0.04em]">all searched ideas</h1>
         <p className="mt-3 text-sm text-muted">
-          {all.length} {all.length === 1 ? "idea" : "ideas"}. this browser keeps your history. the public list is in-memory and resets on a cold start.
+          {total} {total === 1 ? "idea" : "ideas"}. Convex keeps this public search history durable across deploys.
         </p>
 
         {items.length === 0 ? (

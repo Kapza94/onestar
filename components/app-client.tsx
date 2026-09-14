@@ -1,9 +1,11 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import {
   analyzeIdea,
+  fetchReport,
+  fetchReports,
   fetchSearches,
   fetchStatus,
   HOME_RECENT,
@@ -12,13 +14,12 @@ import {
   parseUrlField,
   pushRecentIdea,
   findSavedReport,
-  saveIdeaReport,
   saveSession,
   type RecentIdea,
 } from "@/lib/client";
 import { EXAMPLE_COMPETITOR_URLS, EXAMPLE_IDEA, labeledExampleReport } from "@/lib/example-report";
 import { SEEDED_PREVIEW } from "@/lib/flags";
-import { sameIdea, uniqueRecentIdeas } from "@/lib/recent";
+import { sameIdea } from "@/lib/recent";
 import type { PresenceSnapshot } from "@/lib/presence/store";
 import type { AnalyzeError, AppStatus, Report } from "@/lib/schemas";
 import { ErrorScreen } from "./error-screen";
@@ -33,6 +34,7 @@ type Draft = {
   idea: string;
   urls: string;
   report: Report | null;
+  reportId: string | null;
   view: View;
   error: AnalyzeError["error"] | null;
 };
@@ -65,7 +67,11 @@ export function OneStarApp() {
   const [, setRecent] = useState<RecentIdea[]>([]);
   const [, setArchiveTotal] = useState(0);
   const [, setPresence] = useState<PresenceSnapshot | null>(null);
+  const [backendReady, setBackendReady] = useState(false);
   const requestSeq = useRef(0);
+  const idempotencyKey = useRef<string | null>(null);
+  const firstQueryEffect = useRef(true);
+  const initialQueryIdea = useRef(queryIdea);
   const running = useRef(false);
 
   const idea = draft?.idea ?? queryIdea;
@@ -75,21 +81,53 @@ export function OneStarApp() {
   const error = draft?.error ?? null;
   const busy = view === "research";
 
+  const commit = useCallback((next: Partial<Draft>) => {
+    setDraft((prev) => {
+      const base: Draft = prev ?? {
+        idea: initialQueryIdea.current,
+        urls: "",
+        report: null,
+        reportId: null,
+        view: "home",
+        error: null,
+      };
+      const merged: Draft = {
+        idea: next.idea ?? base.idea,
+        urls: next.urls ?? base.urls,
+        report: next.report === undefined ? base.report : next.report,
+        reportId: next.reportId === undefined ? base.reportId : next.reportId,
+        view: next.view ?? base.view,
+        error: next.error === undefined ? base.error : next.error,
+      };
+      const reportIdForIdea =
+        merged.reportId && (!merged.report || sameIdea(merged.report.idea, merged.idea)) ? merged.reportId : null;
+      saveSession({
+        idea: merged.idea,
+        competitorUrls: merged.urls,
+        report: null,
+        reportId: reportIdForIdea,
+      });
+      return merged;
+    });
+  }, []);
+
   useEffect(() => {
+    const initialIdea = initialQueryIdea.current;
     void fetchStatus().then(setStatus);
     const session = loadSession();
     let recents = loadRecentIdeas();
     if (session?.report?.mode === "live") {
       recents = pushRecentIdea(session.idea);
     }
-    setRecent(recents);
+    queueMicrotask(() => setRecent(recents));
 
-    if (queryIdea) {
-      const saved = findSavedReport(queryIdea);
+    if (initialIdea) {
+      const saved = findSavedReport(initialIdea);
       commit({
-        idea: queryIdea,
+        idea: initialIdea,
         urls: saved?.urls ?? "",
-        report: saved?.report ?? (session?.report && sameIdea(session.report.idea, queryIdea) ? session.report : null),
+        report: saved?.report ?? (session?.report && sameIdea(session.report.idea, initialIdea) ? session.report : null),
+        reportId: session?.reportId ?? null,
         view: "home",
       });
     } else if (session?.report?.mode === "live") {
@@ -97,18 +135,38 @@ export function OneStarApp() {
         idea: session.idea,
         urls: session.competitorUrls,
         report: session.report,
+        reportId: session.reportId ?? null,
         view: "home",
       });
     } else {
-      commit({ idea: "" });
+      commit({ idea: "", reportId: null });
     }
 
     void fetchSearches(1, HOME_RECENT).then((result) => {
       setArchiveTotal(result.total);
-      if (result.items.length) {
-        setRecent((current) => uniqueRecentIdeas([...current, ...result.items]));
-      }
+      setRecent(result.items);
     });
+
+    void fetchReports(1, 50)
+      .then(async (result) => {
+        const match = initialIdea
+          ? result.items.find((item) => item.status === "complete" && sameIdea(item.idea, initialIdea))
+          : result.items.find((item) => item.id === session?.reportId) ??
+            result.items.find((item) => item.status === "complete");
+        if (!match || match.status !== "complete") return;
+        const stored = await fetchReport(match.id);
+        if (!stored?.report) return;
+        commit({
+          idea: stored.idea,
+          urls: stored.competitorUrls.join(", "),
+          report: stored.report,
+          reportId: stored.id,
+          view: "home",
+          error: null,
+        });
+      })
+      .catch(() => null)
+      .finally(() => setBackendReady(true));
 
     let lastPing = 0;
     try {
@@ -139,41 +197,13 @@ export function OneStarApp() {
       });
     }, PRESENCE_MS);
     return () => window.clearInterval(timer);
-  }, []);
-
-  function commit(next: Partial<Draft>) {
-    setDraft((prev) => {
-      const base: Draft = prev ?? {
-        idea: queryIdea,
-        urls: "",
-        report: null,
-        view: "home",
-        error: null,
-      };
-      const merged: Draft = {
-        idea: next.idea ?? base.idea,
-        urls: next.urls ?? base.urls,
-        report: next.report === undefined ? base.report : next.report,
-        view: next.view ?? base.view,
-        error: next.error === undefined ? base.error : next.error,
-      };
-      const session = loadSession();
-      const reportForIdea =
-        merged.report && sameIdea(merged.report.idea, merged.idea)
-          ? merged.report
-          : session?.report && sameIdea(session.report.idea, merged.idea)
-            ? session.report
-            : null;
-      saveSession({
-        idea: merged.idea,
-        competitorUrls: merged.urls,
-        report: reportForIdea,
-      });
-      return merged;
-    });
-  }
+  }, [commit]);
 
   useEffect(() => {
+    if (firstQueryEffect.current) {
+      firstQueryEffect.current = false;
+      return;
+    }
     if (!queryIdea) return;
     const saved = findSavedReport(queryIdea);
     const session = loadSession();
@@ -181,9 +211,24 @@ export function OneStarApp() {
       idea: queryIdea,
       urls: saved?.urls ?? "",
       report: saved?.report ?? (session?.report && sameIdea(session.report.idea, queryIdea) ? session.report : null),
+      reportId: session?.reportId ?? null,
       view: "home",
     });
-  }, [queryIdea]);
+    void fetchReports(1, 50).then(async (result) => {
+      const match = result.items.find((item) => item.status === "complete" && sameIdea(item.idea, queryIdea));
+      if (!match) return;
+      const stored = await fetchReport(match.id);
+      if (!stored?.report) return;
+      commit({
+        idea: stored.idea,
+        urls: stored.competitorUrls.join(", "),
+        report: stored.report,
+        reportId: stored.id,
+        view: "home",
+        error: null,
+      });
+    });
+  }, [commit, queryIdea]);
 
   function showExample() {
     setGoLanding(false);
@@ -199,6 +244,7 @@ export function OneStarApp() {
       idea: EXAMPLE_IDEA,
       urls: EXAMPLE_COMPETITOR_URLS.join(", "),
       report: example,
+      reportId: null,
       view: "home",
       error: null,
     });
@@ -212,7 +258,8 @@ export function OneStarApp() {
     running.current = true;
     setGoLanding(false);
     const seq = ++requestSeq.current;
-    setRecent(pushRecentIdea(trimmed));
+    idempotencyKey.current ??= crypto.randomUUID();
+    const currentIdempotencyKey = idempotencyKey.current;
     void pingPresence({ action: "search", idea: trimmed }).then((snapshot) => {
       if (snapshot) {
         setPresence(snapshot);
@@ -227,25 +274,29 @@ export function OneStarApp() {
     commit({
       idea: trimmed,
       urls: nextUrls,
+      report: null,
+      reportId: null,
       view: "research",
       error: null,
     });
 
     try {
-      const json = await analyzeIdea(trimmed, parseUrlField(nextUrls));
+      const json = await analyzeIdea(trimmed, parseUrlField(nextUrls), currentIdempotencyKey);
       if (seq !== requestSeq.current) {
+        idempotencyKey.current = null;
         if (json.ok) {
-          saveIdeaReport(trimmed, nextUrls, json.report);
           commit({
             idea: trimmed,
             urls: nextUrls,
             report: json.report,
+            reportId: json.reportId,
             error: null,
           });
         }
         return;
       }
       if (!json.ok) {
+        idempotencyKey.current = null;
         commit({
           idea: trimmed,
           urls: nextUrls,
@@ -254,15 +305,29 @@ export function OneStarApp() {
         });
         return;
       }
-      saveIdeaReport(trimmed, nextUrls, json.report);
+      idempotencyKey.current = null;
       commit({
         idea: trimmed,
         urls: nextUrls,
         report: json.report,
+        reportId: json.reportId,
         view: "home",
         error: null,
       });
       requestAnimationFrame(() => document.getElementById("report")?.scrollIntoView({ behavior: "smooth" }));
+    } catch {
+      if (seq === requestSeq.current) {
+        commit({
+          idea: trimmed,
+          urls: nextUrls,
+          view: "error",
+          error: {
+            code: "unknown",
+            message: "Connection lost while saving research. Retry to check the original request.",
+            retryable: true,
+          },
+        });
+      }
     } finally {
       running.current = false;
     }
@@ -275,8 +340,11 @@ export function OneStarApp() {
       {showLanding ? (
         <Landing
           idea={idea}
-          busy={busy}
-          onIdea={(value) => commit({ idea: value })}
+          busy={busy || !backendReady}
+          onIdea={(value) => {
+            idempotencyKey.current = null;
+            commit({ idea: value });
+          }}
           onSubmit={(override) => void run(override ?? idea)}
           onOpenReport={report ? () => setGoLanding(false) : undefined}
         />
@@ -295,7 +363,10 @@ export function OneStarApp() {
             <ErrorScreen
               error={error}
               onRetry={() => void run()}
-              onEdit={() => commit({ view: "home" })}
+              onEdit={() => {
+                idempotencyKey.current = null;
+                commit({ view: "home" });
+              }}
               onExample={SEEDED_PREVIEW ? showExample : undefined}
             />
           ) : null}

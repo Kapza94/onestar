@@ -36,7 +36,9 @@ The difficult engineering is keeping an LLM honest about evidence:
 ```
 app/page.tsx                Client shell: landing → research → tabbed report
 app/api/analyze/route.ts    POST — runs the research pipeline
+app/api/reports/            Owner-checked durable report read/delete routes
 app/api/status/route.ts     Key presence + demo flag (no secrets exposed)
+convex/                     Schema, atomic credit ledger, reports, searches, presence
 lib/research/pipeline.ts    Exa discovery → complaint fan-out → Firecrawl → AI → validation
 lib/research/exa.ts         Exa search + contents API
 lib/research/firecrawl.ts   Firecrawl scrape (markdown, main content only)
@@ -63,9 +65,9 @@ Pipeline, per search:
 | Competitor + complaint search | [Exa](https://exa.ai) |
 | Full-page text | [Firecrawl](https://firecrawl.dev) (optional; failures skipped) |
 | Report generation | xAI Grok / OpenAI / Gemini — pick with `AI_PROVIDER` |
-| Storage | None. Reports live in memory + `localStorage`. No database, no accounts. |
+| Backend + storage | [Convex](https://convex.dev) — durable reports, searches, presence, subjects, and credit ledger |
 
-Backend evolution: [LUK-119 durable reports and metered usage plan](docs/architecture/LUK-119-backend-monetization-plan.md).
+Backend architecture: [LUK-119 Convex backend and metered usage](docs/architecture/LUK-119-backend-monetization-plan.md).
 
 ## Run it locally
 
@@ -87,18 +89,22 @@ GEMINI_MODEL=gemini-2.5-flash
 EXA_API_KEY=
 FIRECRAWL_API_KEY=
 DEMO_MODE=false
+CONVEX_DEPLOYMENT=dev:your-deployment
+NEXT_PUBLIC_CONVEX_URL=https://your-deployment.convex.cloud
+ANON_SESSION_SECRET=generate-a-long-random-production-secret
 ```
 
 Live research needs `EXA_API_KEY` plus one model key. `FIRECRAWL_API_KEY` is optional. With `DEMO_MODE=true` the app runs fully keyless and serves the labeled example report.
 
-Production research is guarded by Cloudflare Rate Limiting bindings: two analyses per visitor per minute and 30 analyses globally per minute. Set `RESEARCH_ENABLED=false` as an emergency spend kill switch. These limits protect bursts; durable account credits belong in the planned usage backend.
+Production research is guarded by Cloudflare Rate Limiting bindings: two analyses per visitor per minute and 30 analyses globally per minute. Set `RESEARCH_ENABLED=false` as an emergency spend kill switch. Convex atomically reserves credits before provider calls and releases them on failure.
 
 ```bash
 npm run dev      # local dev
+npm run convex:dev # sync Convex functions during backend work
 npm run deploy   # build with OpenNext + deploy to Cloudflare Workers
 ```
 
-API keys stay server-side; nothing prefixed `NEXT_PUBLIC_` carries a secret.
+API keys and `ANON_SESSION_SECRET` stay server-side. `NEXT_PUBLIC_CONVEX_URL` is a deployment address, not a credential; owner-scoped data remains behind signed-cookie API routes.
 
 ## Limitations (on purpose)
 

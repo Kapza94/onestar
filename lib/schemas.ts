@@ -134,7 +134,9 @@ export type Report = z.infer<typeof reportSchema>;
 
 export const analyzeSuccessSchema = z.object({
   ok: z.literal(true),
+  reportId: z.string().min(1),
   report: reportSchema,
+  balance: z.number().int().min(0),
 });
 export type AnalyzeSuccess = z.infer<typeof analyzeSuccessSchema>;
 
@@ -150,6 +152,8 @@ export const analyzeErrorSchema = z.object({
       "rate_limited",
       "research_busy",
       "research_paused",
+      "insufficient_credits",
+      "request_conflict",
       "ai_timeout",
       "invalid_ai_json",
       "unknown",
